@@ -1,0 +1,40 @@
+{
+  "miner_address": "prl1p2ka5l06wmq73kdsqec9k7fsv00jt76nfhk56e9nh82fn07qjualspfsxyp",
+  "selected_pool": "AlphaPool PRL",
+  "pools": [
+    {
+      "name": "AlphaPool PRL",
+      "base_url": "https://pearl.alphapool.tech",
+      "stats_path": "/api/stats",
+      "miner_path_template": "/api/miner/{address}",
+      "default_fee_percent": 3.0,
+      "default_payout_min_prl": 1.0
+    }
+  ],
+  "market_url": "https://api.prlscan.com/v1/market/prl",
+  "chain_summary_url": "https://api.prlscan.com/v1/analytics/summary",
+  "fx_url": "https://open.er-api.com/v6/latest/USD",
+  "exchange_url": "https://safetrade.com/exchange/PRL-USDT?type=basic",
+  "hashrate_info_url": "https://hashrate.no/coins/PRL/",
+  "proxy": {
+    "enabled": true,
+    "use_env": true,
+    "url": "http://127.0.0.1:7897"
+  },
+  "calculation": {
+    "fee_mode": "auto",
+    "fee_override_percent": 3.0,
+    "price_mode": "auto",
+    "manual_price_usd": 0.52,
+    "fx_mode": "auto",
+    "manual_usd_cny": 6.78,
+    "hashrate_mode": "fit"
+  },
+  "refresh_seconds": 30,
+  "window": {
+    "x": 80,
+    "y": 80,
+    "alpha": 0.96,
+    "compact": false
+  }
+}

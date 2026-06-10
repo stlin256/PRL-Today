@@ -1,0 +1,12 @@
+[project]
+name = "prl-profit-float"
+version = "0.1.0"
+description = "Always-on-top PRL mining profit floating window."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+prl-profit-float = "prl_profit_float.app:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
