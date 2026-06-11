@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if getattr(sys, "frozen", False):
+    PROJECT_ROOT = Path(sys.executable).resolve().parent
+    BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+    BUNDLE_ROOT = PROJECT_ROOT
 CONFIG_PATH = PROJECT_ROOT / "config.json"
 EXAMPLE_CONFIG_PATH = PROJECT_ROOT / "config.example.json"
+BUNDLED_EXAMPLE_CONFIG_PATH = BUNDLE_ROOT / "config.example.json"
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -43,10 +50,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "manual_usd_cny": 6.78,
         "hashrate_mode": "fit",
     },
+    "refresh": {
+        "miner_seconds": 30,
+        "pool_seconds": 30,
+        "market_seconds": 30,
+        "chain_seconds": 60,
+        "fx_seconds": 3600,
+        "ui_tick_seconds": 1,
+    },
     "refresh_seconds": 30,
+    "display": {
+        "level": "standard",
+    },
     "window": {
         "x": 80,
         "y": 80,
+        "width": 282,
+        "height": 132,
         "alpha": 0.96,
         "compact": False,
     },
@@ -68,8 +88,9 @@ def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as f:
             return deep_merge(DEFAULT_CONFIG, json.load(f))
 
-    if EXAMPLE_CONFIG_PATH.exists():
-        with EXAMPLE_CONFIG_PATH.open("r", encoding="utf-8") as f:
+    example_path = EXAMPLE_CONFIG_PATH if EXAMPLE_CONFIG_PATH.exists() else BUNDLED_EXAMPLE_CONFIG_PATH
+    if example_path.exists():
+        with example_path.open("r", encoding="utf-8") as f:
             config = deep_merge(DEFAULT_CONFIG, json.load(f))
     else:
         config = copy.deepcopy(DEFAULT_CONFIG)
@@ -97,3 +118,16 @@ def selected_pool(config: dict[str, Any]) -> dict[str, Any]:
 
 def pool_names(config: dict[str, Any]) -> list[str]:
     return [str(pool.get("name", "Unnamed Pool")) for pool in config.get("pools", [])]
+
+
+def refresh_seconds(config: dict[str, Any], key: str) -> int:
+    refresh = config.get("refresh") or {}
+    legacy = int(config.get("refresh_seconds") or DEFAULT_CONFIG["refresh_seconds"])
+    default = int((DEFAULT_CONFIG["refresh"] or {}).get(key, legacy))
+    try:
+        value = int(float(refresh.get(key, default)))
+    except (TypeError, ValueError):
+        value = default
+    if key == "ui_tick_seconds":
+        return max(value, 1)
+    return max(value, 5)

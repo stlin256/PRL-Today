@@ -13,7 +13,14 @@ from typing import Any
 from .config import selected_pool
 
 
-USER_AGENT = "prl-profit-float/0.1 (+local desktop monitor)"
+USER_AGENT = "PRL-Today/0.1 (+local desktop monitor)"
+SOURCE_FIELDS = {
+    "pool": "pool_stats",
+    "miner": "miner_stats",
+    "market": "market",
+    "chain": "chain",
+    "fx": "fx",
+}
 
 
 class ApiError(RuntimeError):
@@ -86,24 +93,51 @@ def stats_url(config: dict[str, Any]) -> str:
     return join_url(str(pool.get("base_url", "")), str(pool.get("stats_path", "/api/stats")))
 
 
-def fetch_snapshot(config: dict[str, Any], client: HttpClient | None = None) -> DataSnapshot:
+def source_url(config: dict[str, Any], source: str) -> str:
+    if source == "pool":
+        return stats_url(config)
+    if source == "miner":
+        return miner_url(config)
+    if source == "market":
+        return str(config.get("market_url", ""))
+    if source == "chain":
+        return str(config.get("chain_summary_url", ""))
+    if source == "fx":
+        return str(config.get("fx_url", ""))
+    raise KeyError(source)
+
+
+def fetch_snapshot(
+    config: dict[str, Any],
+    client: HttpClient | None = None,
+    sources: list[str] | tuple[str, ...] | None = None,
+) -> DataSnapshot:
     client = client or HttpClient(config)
     snapshot = DataSnapshot()
-    endpoints = [
-        ("pool_stats", stats_url(config)),
-        ("miner_stats", miner_url(config)),
-        ("market", str(config.get("market_url", ""))),
-        ("chain", str(config.get("chain_summary_url", ""))),
-        ("fx", str(config.get("fx_url", ""))),
-    ]
-    for field_name, url in endpoints:
+    selected_sources = list(sources or SOURCE_FIELDS.keys())
+    for source in selected_sources:
+        field_name = SOURCE_FIELDS.get(source)
+        if not field_name:
+            snapshot.errors.append(f"unknown source: {source}")
+            continue
+        url = source_url(config, source)
         if not url:
             continue
         try:
             setattr(snapshot, field_name, client.get_json(url))
         except ApiError as exc:
-            snapshot.errors.append(str(exc))
+            snapshot.errors.append(f"{source}: {exc}")
     return snapshot
+
+
+def merge_snapshot(base: DataSnapshot, update: DataSnapshot) -> DataSnapshot:
+    for field_name in SOURCE_FIELDS.values():
+        value = getattr(update, field_name)
+        if value is not None:
+            setattr(base, field_name, value)
+    base.fetched_at = update.fetched_at
+    base.errors = list(update.errors)
+    return base
 
 
 def apply_proxy_env(config: dict[str, Any]) -> None:

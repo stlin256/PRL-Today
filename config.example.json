@@ -30,10 +30,23 @@
     "manual_usd_cny": 6.78,
     "hashrate_mode": "fit"
   },
+  "refresh": {
+    "miner_seconds": 30,
+    "pool_seconds": 30,
+    "market_seconds": 30,
+    "chain_seconds": 60,
+    "fx_seconds": 3600,
+    "ui_tick_seconds": 1
+  },
   "refresh_seconds": 30,
+  "display": {
+    "level": "standard"
+  },
   "window": {
     "x": 80,
     "y": 80,
+    "width": 282,
+    "height": 132,
     "alpha": 0.96,
     "compact": false
   }
