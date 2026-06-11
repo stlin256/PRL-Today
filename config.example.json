@@ -212,13 +212,14 @@
   "refresh_seconds": 30,
   "display": {
     "level": "standard",
-    "currency": "auto"
+    "currency": "auto",
+    "configured": false
   },
   "window": {
     "x": 80,
     "y": 80,
-    "width": 282,
-    "height": 132,
+    "width": 246,
+    "height": 106,
     "alpha": 0.96,
     "compact": false
   }

@@ -14,7 +14,7 @@ from typing import Any
 from .config import selected_market_source, selected_pool
 
 
-USER_AGENT = "PRL-Today/0.1 (+local desktop monitor)"
+USER_AGENT = "PRL-Today/0.1"
 SOURCE_FIELDS = {
     "pool": "pool_stats",
     "miner": "miner_stats",

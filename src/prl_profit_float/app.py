@@ -65,7 +65,6 @@ def qt_python_candidates() -> list[Path]:
     env_python = os.environ.get("PRL_TODAY_PYTHON")
     if env_python:
         candidates.append(Path(env_python))
-    candidates.append(Path(r"C:\ProgramData\anaconda3\python.exe"))
 
     for raw in os.environ.get("PATH", "").split(os.pathsep):
         if not raw:

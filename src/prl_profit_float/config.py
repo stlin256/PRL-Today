@@ -233,12 +233,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "display": {
         "level": "standard",
         "currency": "auto",
+        "configured": False,
     },
     "window": {
         "x": 80,
         "y": 80,
-        "width": 282,
-        "height": 132,
+        "width": 246,
+        "height": 106,
         "alpha": 0.96,
         "compact": False,
     },

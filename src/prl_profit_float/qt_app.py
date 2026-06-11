@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from PyQt6.QtCore import QObject, QEasingCurve, QPoint, QPropertyAnimation, QThread, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
-    from PyQt6.QtGui import QAction, QDesktopServices, QPixmap
+    from PyQt6.QtCore import QObject, QEasingCurve, QPoint, QPropertyAnimation, QSize, QThread, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
+    from PyQt6.QtGui import QAction, QDesktopServices, QIcon, QPixmap
     from PyQt6.QtWidgets import (
         QApplication,
         QComboBox,
@@ -37,8 +37,8 @@ try:
 
     QT_API = "PyQt6"
 except ImportError:
-    from PyQt5.QtCore import QObject, QEasingCurve, QPoint, QPropertyAnimation, QThread, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
-    from PyQt5.QtGui import QDesktopServices, QPixmap
+    from PyQt5.QtCore import QObject, QEasingCurve, QPoint, QPropertyAnimation, QSize, QThread, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
+    from PyQt5.QtGui import QDesktopServices, QIcon, QPixmap
     from PyQt5.QtWidgets import (
         QAction,
         QApplication,
@@ -90,6 +90,7 @@ if QT_API == "PyQt6":
     NO_FRAME = QFrame.Shape.NoFrame
     SCROLLBAR_OFF = Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     ALIGN_LEFT = Qt.AlignmentFlag.AlignLeft
+    ALIGN_CENTER = Qt.AlignmentFlag.AlignCenter
     HORIZONTAL = Qt.Orientation.Horizontal
     COMPUTER_ICON = QStyle.StandardPixmap.SP_ComputerIcon
     LEFT_BUTTON = Qt.MouseButton.LeftButton
@@ -103,6 +104,7 @@ else:
     NO_FRAME = QFrame.NoFrame
     SCROLLBAR_OFF = Qt.ScrollBarAlwaysOff
     ALIGN_LEFT = Qt.AlignLeft
+    ALIGN_CENTER = Qt.AlignCenter
     HORIZONTAL = Qt.Horizontal
     COMPUTER_ICON = QStyle.SP_ComputerIcon
     LEFT_BUTTON = Qt.LeftButton
@@ -165,6 +167,88 @@ def display_currency(config: dict[str, Any]) -> str:
     if requested in {"usd", "cny"}:
         return requested
     return "cny" if system_prefers_cny() else "usd"
+
+
+class SlotNumber(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.labels: list[QLabel] = []
+        self.current = ""
+        self.target = ""
+        self.phase = 0
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+        self.setMinimumHeight(30)
+
+    def set_target(self, value: str) -> None:
+        if value == self.target:
+            return
+        self.target = value
+        width = len(self.target)
+        if len(self.current) < width:
+            self.current = self.current.rjust(width)
+        elif len(self.current) > width:
+            self.current = self.current[-width:]
+        self.ensure_labels(width)
+
+    def ensure_labels(self, width: int) -> None:
+        while len(self.labels) < width:
+            label = QLabel(" ")
+            label.setAlignment(ALIGN_CENTER)
+            label.setMinimumWidth(13)
+            label.setStyleSheet(
+                f"font-family: {FONT_MONO}; font-size: 23px; font-weight: 800; color: {PEARL}; "
+                f"background: transparent; letter-spacing: 0px;"
+            )
+            self.labels.append(label)
+            self.layout.addWidget(label)
+        while len(self.labels) > width:
+            label = self.labels.pop()
+            self.layout.removeWidget(label)
+            label.deleteLater()
+
+    def step(self) -> None:
+        if not self.target:
+            return
+        self.phase = (self.phase + 1) % 10
+        chars = list(self.current.rjust(len(self.target)))
+        target = self.target
+        changed = False
+        for idx, goal in enumerate(target):
+            current = chars[idx]
+            if current == goal:
+                continue
+            if current.isdigit() and goal.isdigit():
+                chars[idx] = str((int(current) + 1) % 10)
+                if chars[idx] == goal:
+                    changed = True
+            else:
+                chars[idx] = goal
+                changed = True
+        self.current = "".join(chars)
+        if self.current == target:
+            changed = True
+        self.render(changed)
+
+    def render(self, settled: bool = False) -> None:
+        if not self.labels:
+            return
+        text = self.current or self.target
+        self.ensure_labels(len(text))
+        for idx, char in enumerate(text):
+            label = self.labels[idx]
+            label.setText(char)
+            if char.isdigit() and not settled and self.target and char != self.target[idx]:
+                label.setStyleSheet(
+                    f"font-family: {FONT_MONO}; font-size: 23px; font-weight: 800; color: {ACCENT_LIGHT}; "
+                    f"background: rgba(230,209,173,18); letter-spacing: 0px;"
+                )
+            else:
+                label.setStyleSheet(
+                    f"font-family: {FONT_MONO}; font-size: 23px; font-weight: 800; color: {PEARL}; "
+                    f"background: transparent; letter-spacing: 0px;"
+                )
 
 
 class ProfitWorker(QObject):
@@ -264,7 +348,14 @@ class PRLTodayWindow(QWidget):
         self.thread: QThread | None = None
         self.worker: ProfitWorker | None = None
         self._is_config = False
+        self._first_run = not bool((self.config.get("display") or {}).get("configured", False))
+        self._dragging = False
+        self._suppress_geometry_persist = True
+        self._monitor_geometry: tuple[int, int, int, int] | None = None
         self.old_pos = QPoint()
+        self.geometry_save_timer = QTimer(self)
+        self.geometry_save_timer.setSingleShot(True)
+        self.geometry_save_timer.timeout.connect(self.persist_geometry)
 
         self.init_ui()
         self.init_tray()
@@ -276,9 +367,13 @@ class PRLTodayWindow(QWidget):
         self.loading_timer.timeout.connect(self.animate_loading)
         self.loading_timer.start(180)
         self.restore_geometry()
+        self._suppress_geometry_persist = False
+        if self._first_run:
+            QTimer.singleShot(350, self.show_first_run_config)
 
     def init_ui(self) -> None:
         self.setWindowTitle("PRL-Today")
+        self.setWindowIcon(QIcon(str(asset_path("assets", "app_icon.ico"))))
         self.setWindowFlags(FRAMELESS_FLAGS)
         self.setAttribute(TRANSLUCENT_BACKGROUND)
         self.setMouseTracking(True)
@@ -297,13 +392,13 @@ class PRLTodayWindow(QWidget):
         self.header.setFixedHeight(24)
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(5)
+        header_layout.setSpacing(2)
         self.logo_label = QLabel()
         self.logo_label.setObjectName("LogoLabel")
-        self.logo_label.setFixedSize(38, 16)
+        self.logo_label.setFixedSize(40, 13)
         self.load_logo()
         header_layout.addWidget(self.logo_label)
-        self.title_label = QLabel("PRL-Today")
+        self.title_label = QLabel("Today")
         self.title_label.setStyleSheet(
             f"font-family: {FONT_UI}; font-size: 10px; font-weight: 700; color: {PEARL};"
         )
@@ -359,14 +454,15 @@ class PRLTodayWindow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        self.amount_label = QLabel("Loading")
-        self.amount_label.setStyleSheet(
-            f"font-family: {FONT_MONO}; font-size: 23px; font-weight: 700; color: {PEARL}; letter-spacing: 0px;"
-        )
-        self.amount_label.setMinimumHeight(30)
+        self.amount_label = SlotNumber()
+        self.amount_label.set_target(self.loading_text())
+        self.amount_label.step()
 
-        self.sub_label = QLabel("miner / pool / market")
-        self.sub_label.setStyleSheet(f"font-family: {FONT_UI}; font-size: 10px; color: {SHELL}; font-weight: 700;")
+        self.sub_label = QLabel("")
+        self.sub_label.setMinimumWidth(180)
+        self.sub_label.setStyleSheet(
+            f"font-family: {FONT_MONO}; font-size: 10px; color: {SHELL}; font-weight: 700; letter-spacing: 0px;"
+        )
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(2)
@@ -395,7 +491,6 @@ class PRLTodayWindow(QWidget):
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.metric_row)
         layout.addWidget(self.detail_label)
-        layout.addStretch()
         return view
 
     def build_config_view(self) -> QWidget:
@@ -474,11 +569,13 @@ class PRLTodayWindow(QWidget):
         self.slider_opacity.setValue(self.bg_opacity)
         self.slider_opacity.valueChanged.connect(self.on_opacity_changed)
 
-        repo_url = str(self.config.get("repository_url") or "https://github.com/stlin256/prl-today")
-        self.repo_link = QLabel(f'<a href="{repo_url}">github.com/stlin256/prl-today</a>')
-        self.repo_link.setOpenExternalLinks(True)
-        self.repo_link.setTextInteractionFlags(self.repo_link.textInteractionFlags())
-        self.repo_link.setObjectName("RepoLink")
+        self.repo_url = str(self.config.get("repository_url") or "https://github.com/stlin256/prl-today")
+        self.repo_button = QPushButton("stlin256/PRL-Today")
+        self.repo_button.setObjectName("RepoButton")
+        self.repo_button.setFixedHeight(24)
+        self.repo_button.setIcon(QIcon(str(asset_path("assets", "github_mark.svg"))))
+        self.repo_button.setIconSize(QSize(15, 15))
+        self.repo_button.clicked.connect(self.open_repository)
 
         self.configure_inputs()
         self.sync_tool_fee_from_software()
@@ -497,7 +594,7 @@ class PRLTodayWindow(QWidget):
         form.addRow(self.form_label("Refresh"), self.row_widget(self.input_miner_refresh, self.input_pool_refresh, self.input_market_refresh))
         form.addRow(self.form_label("Chain/FX"), self.row_widget(self.input_chain_refresh, self.input_fx_refresh))
         form.addRow(self.form_label("Opacity"), self.slider_opacity)
-        form.addRow(self.form_label("Repo"), self.repo_link)
+        form.addRow(self.form_label("Repo"), self.repo_button)
         scroll.setWidget(form_host)
 
         self.config_msg = QLabel("")
@@ -526,6 +623,9 @@ class PRLTodayWindow(QWidget):
         for widget in widgets:
             layout.addWidget(widget)
         return host
+
+    def open_repository(self) -> None:
+        QDesktopServices.openUrl(QUrl(self.repo_url))
 
     def configure_inputs(self) -> None:
         input_style = (
@@ -587,7 +687,10 @@ class PRLTodayWindow(QWidget):
 
     def init_tray(self) -> None:
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(QApplication.style().standardIcon(COMPUTER_ICON))
+        icon = QIcon(str(asset_path("assets", "app_icon.ico")))
+        if icon.isNull():
+            icon = QApplication.style().standardIcon(COMPUTER_ICON)
+        self.tray_icon.setIcon(icon)
         menu = QMenu()
         menu.addAction(QAction("Show", self, triggered=self.show_window))
         menu.addAction(QAction("Settings", self, triggered=self.show_config))
@@ -678,6 +781,21 @@ class PRLTodayWindow(QWidget):
                 color: {ACCENT};
                 text-decoration: none;
             }}
+            QPushButton#RepoButton {{
+                background: transparent;
+                border: 1px solid {INPUT_BORDER};
+                border-radius: 4px;
+                color: {PEARL};
+                font-family: {FONT_UI};
+                font-size: 10px;
+                font-weight: 700;
+                padding: 2px 7px;
+                text-align: left;
+            }}
+            QPushButton#RepoButton:hover {{
+                border: 1px solid {ACCENT};
+                background: {PANEL_SOFT};
+            }}
             QWidget#ConfigView, QWidget#ConfigForm {{
                 background: transparent;
             }}
@@ -726,20 +844,20 @@ class PRLTodayWindow(QWidget):
         if self._is_config:
             return
         sizes = {
-            "lite": (218, 92),
-            "standard": (282, 132),
-            "detail": (382, 222),
+            "lite": (214, 76),
+            "standard": (246, 106),
+            "detail": (342, 184),
         }
         min_sizes = {
-            "lite": (180, 78),
-            "standard": (230, 112),
-            "detail": (320, 180),
+            "lite": (196, 72),
+            "standard": (228, 98),
+            "detail": (316, 166),
         }
         min_w, min_h = min_sizes[level]
         self.setMinimumSize(min_w, min_h)
         if force_resize:
             width, height = sizes[level]
-            self.resize(width, height)
+            self.resize_without_geometry_persist(width, height)
 
     def restore_geometry(self) -> None:
         window = self.config.get("window") or {}
@@ -747,7 +865,30 @@ class PRLTodayWindow(QWidget):
         y = safe_int(window.get("y", 80), 80, 0)
         width = safe_int(window.get("width", self.width()), self.width(), self.minimumWidth())
         height = safe_int(window.get("height", self.height()), self.height(), self.minimumHeight())
+        x, y, width, height = self.clamp_geometry(x, y, width, height)
         self.setGeometry(x, y, width, height)
+
+    def resize_without_geometry_persist(self, width: int, height: int) -> None:
+        x, y, width, height = self.clamp_geometry(self.x(), self.y(), width, height)
+        old_state = self._suppress_geometry_persist
+        self._suppress_geometry_persist = True
+        try:
+            self.setGeometry(x, y, width, height)
+        finally:
+            self._suppress_geometry_persist = old_state
+
+    def clamp_geometry(self, x: int, y: int, width: int, height: int) -> tuple[int, int, int, int]:
+        screen = QApplication.primaryScreen().availableGeometry()
+        width = max(self.minimumWidth(), min(width, screen.width()))
+        height = max(self.minimumHeight(), min(height, screen.height()))
+        max_x = screen.left() + max(screen.width() - width, 0)
+        max_y = screen.top() + max(screen.height() - height, 0)
+        return (
+            max(screen.left(), min(x, max_x)),
+            max(screen.top(), min(y, max_y)),
+            width,
+            height,
+        )
 
     def on_opacity_changed(self, value: int) -> None:
         self.bg_opacity = value
@@ -771,17 +912,39 @@ class PRLTodayWindow(QWidget):
             self.view_stack.setCurrentIndex(0)
             self.btn_settings.setText("...")
             self._is_config = False
-            self.apply_display_level(force_resize=True)
+            self.apply_display_level(force_resize=False)
+            self.restore_monitor_geometry()
         else:
             self.show_config()
 
+    def restore_monitor_geometry(self) -> None:
+        if self._monitor_geometry:
+            x, y, width, height = self._monitor_geometry
+            x, y, width, height = self.clamp_geometry(x, y, width, height)
+            old_state = self._suppress_geometry_persist
+            self._suppress_geometry_persist = True
+            try:
+                self.setGeometry(x, y, width, height)
+            finally:
+                self._suppress_geometry_persist = old_state
+        else:
+            self.apply_display_level(force_resize=True)
+
     def show_config(self) -> None:
+        if not self._is_config:
+            geom = self.geometry()
+            self._monitor_geometry = (geom.x(), geom.y(), geom.width(), geom.height())
         self._is_config = True
         self.view_stack.setCurrentIndex(1)
         self.btn_settings.setText("<")
-        self.setMinimumSize(380, 390)
-        self.resize(max(self.width(), 420), max(self.height(), 480))
+        self.setMinimumSize(380, 410)
+        self.resize_without_geometry_persist(max(self.width(), 430), max(self.height(), 520))
         self.show_window()
+
+    def show_first_run_config(self) -> None:
+        self.show_config()
+        self.config_msg.setStyleSheet(f"font-size: 9px; color: {ACCENT}; font-weight: 700;")
+        self.config_msg.setText("Set wallet, pool, miner and price source, then save.")
 
     def show_window(self) -> None:
         self.showNormal()
@@ -801,6 +964,7 @@ class PRLTodayWindow(QWidget):
         cfg["selected_market_source"] = self.combo_market_source.currentText()
         cfg.setdefault("display", {})["level"] = self.combo_level.currentText()
         cfg["display"]["currency"] = self.combo_currency.currentText()
+        cfg["display"]["configured"] = True
         cfg.setdefault("proxy", {})["enabled"] = self.combo_proxy.currentText() == "enabled"
         cfg["proxy"]["url"] = self.input_proxy.text().strip()
         cfg["proxy"]["use_env"] = True
@@ -830,6 +994,7 @@ class PRLTodayWindow(QWidget):
 
         save_config(cfg, CONFIG_PATH)
         self.config = cfg
+        self._first_run = False
         self.display_level = clean_level((cfg.get("display") or {}).get("level"))
         self.currency = display_currency(cfg)
         self.intervals = {source: refresh_seconds(cfg, f"{source}_seconds") for source in SOURCE_FIELDS}
@@ -843,17 +1008,26 @@ class PRLTodayWindow(QWidget):
 
     def capture_geometry(self, cfg: dict[str, Any] | None = None) -> None:
         target = cfg if cfg is not None else self.config
-        geom = self.geometry()
+        if self._is_config and self._monitor_geometry:
+            x, y, width, height = self._monitor_geometry
+        else:
+            geom = self.geometry()
+            x, y, width, height = geom.x(), geom.y(), geom.width(), geom.height()
         window = target.setdefault("window", {})
-        window["x"] = geom.x()
-        window["y"] = geom.y()
-        window["width"] = geom.width()
-        window["height"] = geom.height()
+        window["x"] = x
+        window["y"] = y
+        window["width"] = width
+        window["height"] = height
         window["alpha"] = self.bg_opacity / 255.0
 
     def persist_geometry(self) -> None:
         self.capture_geometry(self.config)
         save_config(self.config, CONFIG_PATH)
+
+    def schedule_geometry_persist(self) -> None:
+        if self._suppress_geometry_persist or self._is_config or not self.isVisible():
+            return
+        self.geometry_save_timer.start(350)
 
     @pyqtSlot(object)
     def on_data_updated(self, data: dict[str, Any]) -> None:
@@ -883,7 +1057,8 @@ class PRLTodayWindow(QWidget):
         prl = self.smoother.value()
         usd = prl * estimate.price_usd
         cny = usd * estimate.usd_cny
-        self.amount_label.setText(self.primary_amount(usd, cny))
+        self.amount_label.set_target(self.primary_amount(usd, cny))
+        self.amount_label.step()
         self.sub_label.setText(self.secondary_amount(usd, cny, prl))
         elapsed, _ = seconds_today()
         self.progress_bar.setValue(int(elapsed))
@@ -903,20 +1078,24 @@ class PRLTodayWindow(QWidget):
         if not self.loading:
             return
         self.loading_phase = (self.loading_phase + 1) % 100
-        dots = "." * ((self.loading_phase // 8) % 4)
+        text = self.loading_text()
         if self.last_estimate is None:
-            self.amount_label.setText(f"Loading{dots}")
-            self.sub_label.setText("sync miner / pool / market")
+            self.amount_label.set_target(text)
+            self.amount_label.step()
+            self.sub_label.setText("")
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(self.loading_phase)
             self.update_progress_style(True)
-        self.status_label.setText(self.loading_status())
+        self.status_label.setText(text)
         self.status_label.adjustSize()
         self.update_header_positions(self.underMouse())
 
     def loading_status(self) -> str:
-        sources = "/".join(self.loading_sources[:3]) if self.loading_sources else "data"
-        return f"sync {sources}"
+        return self.loading_text()
+
+    def loading_text(self) -> str:
+        dots = "." * ((self.loading_phase // 8) % 4)
+        return f"syncing {dots:<3}"
 
     def primary_amount(self, usd: float, cny: float) -> str:
         if self.currency == "cny":
@@ -925,8 +1104,8 @@ class PRLTodayWindow(QWidget):
 
     def secondary_amount(self, usd: float, cny: float, prl: float) -> str:
         if self.currency == "cny":
-            return f"${usd:.6f}  |  {prl:.6f} PRL"
-        return f"CNY {cny:.6f}  |  {prl:.6f} PRL"
+            return f"${usd:.6f} | {prl:.6f} PRL"
+        return f"CNY {cny:.6f} | {prl:.6f} PRL"
 
     def update_detail_text(self, estimate: ProfitEstimate) -> None:
         if self.display_level != "detail":
@@ -964,9 +1143,10 @@ class PRLTodayWindow(QWidget):
     def mousePressEvent(self, event: Any) -> None:
         if event.button() == LEFT_BUTTON:
             self.old_pos = self.event_global_pos(event)
+            self._dragging = True
 
     def mouseMoveEvent(self, event: Any) -> None:
-        if event.buttons() == LEFT_BUTTON:
+        if event.buttons() == LEFT_BUTTON and self._dragging:
             current = self.event_global_pos(event)
             delta = current - self.old_pos
             new_pos = self.pos() + delta
@@ -975,14 +1155,18 @@ class PRLTodayWindow(QWidget):
             new_pos.setY(max(screen.top(), min(new_pos.y(), screen.bottom() - self.height())))
             self.move(new_pos)
             self.old_pos = current
-            self.persist_geometry()
+
+    def mouseReleaseEvent(self, event: Any) -> None:
+        if event.button() == LEFT_BUTTON and self._dragging:
+            self._dragging = False
+            self.schedule_geometry_persist()
+        super().mouseReleaseEvent(event)
 
     def resizeEvent(self, event: Any) -> None:
         super().resizeEvent(event)
         self.sizegrip.move(self.width() - 14, self.height() - 14)
         self.update_header_positions(self.underMouse())
-        if self.isVisible():
-            self.persist_geometry()
+        self.schedule_geometry_persist()
 
     def on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (TRAY_TRIGGER, TRAY_DOUBLE_CLICK):
@@ -992,6 +1176,9 @@ class PRLTodayWindow(QWidget):
                 self.show_window()
 
     def shutdown(self) -> None:
+        self.geometry_save_timer.stop()
+        if hasattr(self, "tray_icon"):
+            self.tray_icon.hide()
         if self.worker:
             self.worker.stop()
         if self.thread:

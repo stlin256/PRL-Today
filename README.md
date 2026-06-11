@@ -1,82 +1,133 @@
 # PRL-Today
 
-Windows 桌面悬浮窗，用于查看 Pearl (PRL) 当天实时收益，显示美元和人民币数值，保留 6 位小数并按拟合/平滑函数持续滚动。
+[![Release](https://img.shields.io/github/v/release/stlin256/PRL-Today?sort=semver)](https://github.com/stlin256/PRL-Today/releases)
+[![Windows](https://img.shields.io/badge/platform-Windows-0078D6)](https://github.com/stlin256/PRL-Today/releases)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)](https://www.python.org/)
+[![Built with PyInstaller](https://img.shields.io/badge/build-PyInstaller-5A0FC8)](https://pyinstaller.org/)
 
-## 功能
+PRL-Today is a small always-on-top Windows floating window for tracking today's Pearl (PRL) mining revenue in real time.
 
-- 默认监控钱包：`prl1p2ka5l06wmq73kdsqec9k7fsv00jt76nfhk56e9nh82fn07qjualspfsxyp`
-- 默认矿池：AlphaPool PRL，自动从 `https://pearl.alphapool.tech/api/stats` 读取 PPLNS 手续费、出块奖励、最低支付和 stratum 信息。
-- 默认价格：`https://api.prlscan.com/v1/market/prl`，该接口包含 SafeTrade PRL/USDT provider 数据。
-- 价格源可选：PRLScan、SafeTrade、SafeTrade mirror；SafeTrade 优先读取 `https://safetrade.com/api/v2/trade/public/tickers/prlusdt`，并保留 `https://safetrade.com/exchange/PRL-USDT?type=basic` 页面解析兜底，都会走代理配置。
-- 默认汇率：`https://open.er-api.com/v6/latest/USD` 的 USD/CNY。
-- 默认代理：`http://127.0.0.1:7897`，也会写入 `HTTP_PROXY` 和 `HTTPS_PROXY`。
-- 设置页仓库链接：`https://github.com/stlin256/prl-today`。
-- Qt 悬浮窗风格参考 `minimax_moniter`：无边框置顶、半透明容器、悬停显示设置/关闭、同窗配置页、托盘菜单、拖拽和右下角缩放。
-- Qt 绑定优先尝试 PyQt6，当前机器的 PyQt6 `QtWidgets` DLL 加载失败时会自动回退到 Anaconda 已可用的 PyQt5。
-- 配置页支持改钱包、矿池、代理、矿池手续费、挖矿工具抽水、手动价格、手动汇率、刷新间隔、算力模式、显示层级和默认货币。
-- 内置 hashrate.no PRL 预置：AlphaPool、Kryptex、Pearlhash、Luckypool 等矿池，以及 AlphaMiner 1% 和 SRBMiner 3% 挖矿软件抽水。
-- 默认货币为 `auto`：系统语言为中文时主数字显示 CNY，其他语言显示 USD。
+It reads live miner, pool, market, network, and FX data, then displays a continuously moving 6-decimal estimate. The primary currency is selected automatically: Chinese system locales show CNY first, while other locales show USD first.
 
-## 刷新频率
+## Features
 
-- 主收益数字：每 1 秒用平滑函数滚动一次。
-- 钱包矿工数据：每 30 秒刷新。
-- 矿池统计：每 30 秒刷新。
-- PRL/USD 市场价格：每 30 秒刷新。
-- 链摘要/全网算力：每 60 秒刷新。
-- USD/CNY 汇率：每 3600 秒刷新。
+- Floating Qt desktop window with frameless, translucent, always-on-top behavior.
+- First-run setup guide for wallet address, pool, mining software, price source, proxy, and display options.
+- Slot-machine style rolling number animation for the main revenue value.
+- PRL-inspired dark pearl visual theme and bundled app icon.
+- Stable-width primary and secondary values to avoid layout jitter while numbers change.
+- Miner/pool/market refresh scheduler instead of one global polling interval.
+- Configurable display levels: `lite`, `standard`, and `detail`.
+- Built-in PRL mining pool presets from Hashrate.no, including AlphaPool, Kryptex, Pearlhash, Luckypool, JETSKI, BaikalMine, akoya, Himpool, NushyPool, Mineprl, and HeroMiners.
+- Built-in PRL miner presets from Hashrate.no:
+  - AlphaMiner, pearl algorithm, 1.00% developer fee.
+  - SRBMiner, pearlhash algorithm, 3.00% developer fee.
+- Price source selection:
+  - PRLScan.
+  - SafeTrade public ticker API.
+  - SafeTrade mirror endpoints.
+  - SafeTrade exchange page fallback.
+- Optional proxy support.
 
-显示层级：
+## Download
 
-- `lite`：只显示 CNY、USD、PRL 和当天进度条。
-- `standard`：增加矿工算力、价格和矿池费率。
-- `detail`：增加 24h 预计、全网算力、区块参数、各数据源刷新频率和最后更新时间。
+Download the latest Windows build from the [GitHub Releases](https://github.com/stlin256/PRL-Today/releases) page.
 
-## 运行
+On first launch, PRL-Today opens the setup panel automatically. Enter your wallet address, select the pool/mining software/price source, then save.
 
-```powershell
-cd F:\PROJECT\PRL-Today
-py run.py
-```
+## Data Refresh
 
-也可以双击：
+- UI rolling value: every 1 second.
+- Miner wallet data: every 30 seconds.
+- Pool stats: every 30 seconds.
+- PRL/USD market price: every 30 seconds.
+- Chain/network summary: every 60 seconds.
+- USD/CNY FX rate: every 3600 seconds.
 
-```text
-start_prl_today.bat
-```
-
-首次运行会从 `config.example.json` 生成 `config.json`。之后设置窗口保存的内容都写入 `config.json`，该文件默认不进 Git。
-
-不打开悬浮窗，只检查实时接口和收益计算：
-
-```powershell
-py run.py --check
-```
-
-## 收益口径
-
-悬浮窗主数字是“今天到当前时刻”的估算收益：
+## Revenue Formula
 
 ```text
-预计 24h PRL = 矿工算力 / 全网算力 * (86400 / 平均出块秒数) * 当前区块奖励 * (1 - 矿池费率) * (1 - 挖矿工具抽水)
-当天当前 PRL = max(今天已入账/待结算 PRL, 预计 24h PRL * 今天已过秒数 / 86400)
-USD = PRL * PRL/USD
-RMB = USD * USD/CNY
+projected_24h_prl =
+  miner_hashrate / network_hashrate
+  * (86400 / average_block_time_seconds)
+  * block_reward
+  * (1 - pool_fee_percent)
+  * (1 - mining_software_fee_percent)
+
+today_prl =
+  max(observed_today_prl, projected_24h_prl * elapsed_seconds_today / 86400)
+
+today_usd = today_prl * PRL/USD
+today_cny = today_usd * USD/CNY
 ```
 
-算力模式默认是 `fit`：用矿工最近 hashrate series 做线性拟合并限制极端值，再估算收益。你也可以在设置里切换为 `miner_1h`、`miner_24h` 或 `worker_live`。
+The default hashrate mode is `fit`, which uses the miner hashrate series and a bounded linear fit. You can also select `miner_1h`, `miner_24h`, or `worker_live`.
 
-## 调试
+## Running From Source
 
 ```powershell
-py -m unittest discover -s tests
-py -m compileall src tests
+git clone https://github.com/stlin256/PRL-Today.git
+cd PRL-Today
+python -m pip install -e .
+python run.py
 ```
 
-## 打包
-
-本机已使用 Anaconda Python + PyInstaller 打包。重新打包可执行：
+Run a one-shot live data check without opening the GUI:
 
 ```powershell
-python -m PyInstaller --noconfirm --clean --windowed --name PRL-Today --paths src --hidden-import prl_profit_float.qt_app --hidden-import PyQt5.QtWidgets --exclude-module PyQt6 --add-data "config.example.json;." --add-data "assets/prl_logo.svg;assets" run.py
+python run.py --check
+```
+
+If your default Python cannot import Qt, install the project dependencies in that environment or set `PRL_TODAY_PYTHON` to a Python executable that has PyQt installed.
+
+## Windows Build
+
+```powershell
+python -m pip install pyinstaller
+python -m PyInstaller PRL-Today.spec --noconfirm --clean
+```
+
+The build output is a single executable:
+
+```text
+dist\PRL-Today.exe
+```
+
+For releases, upload `PRL-Today.exe` directly as the Windows asset.
+
+## Configuration
+
+Settings are saved to `config.json`, which is intentionally ignored by Git.
+
+The setup panel lets you configure:
+
+- Wallet address.
+- Pool preset.
+- Mining software preset and developer fee.
+- Pool fee mode.
+- Price source and manual price fallback.
+- USD/CNY source and manual FX fallback.
+- Proxy.
+- Refresh intervals.
+- Display currency and detail level.
+
+## Tests
+
+```powershell
+python -m unittest discover -s tests
+python -m compileall src tests
+```
+
+## Notes
+
+- AlphaPool is currently the only bundled pool preset with live miner/pool API paths wired by default.
+- Other pool presets are included for fee and metadata convenience; they can be extended with API paths later.
+- SafeTrade can reject direct requests in some network environments. Use the proxy setting if needed.
+
+## Donation
+
+If this tool is useful to you, donations are appreciated:
+
+```text
+prl1p2ka5l06wmq73kdsqec9k7fsv00jt76nfhk56e9nh82fn07qjualspfsxyp
 ```
