@@ -169,7 +169,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "source_url": "https://hashrate.no/miners/SRBMiner",
         },
     ],
-    "selected_market_source": "PRLScan",
+    "selected_market_source": "SafeTrade",
     "market_sources": [
         {
             "name": "PRLScan",
@@ -199,7 +199,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             ],
         },
     ],
-    "market_url": "https://api.prlscan.com/v1/market/prl",
+    "market_url": "https://safetrade.com/api/v2/trade/public/tickers/prlusdt",
     "chain_summary_url": "https://api.prlscan.com/v1/analytics/summary",
     "fx_url": "https://open.er-api.com/v6/latest/USD",
     "exchange_url": "https://safetrade.com/exchange/PRL-USDT?type=basic",

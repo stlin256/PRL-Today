@@ -239,16 +239,10 @@ class SlotNumber(QWidget):
         for idx, char in enumerate(text):
             label = self.labels[idx]
             label.setText(char)
-            if char.isdigit() and not settled and self.target and char != self.target[idx]:
-                label.setStyleSheet(
-                    f"font-family: {FONT_MONO}; font-size: 23px; font-weight: 800; color: {ACCENT_LIGHT}; "
-                    f"background: rgba(230,209,173,18); letter-spacing: 0px;"
-                )
-            else:
-                label.setStyleSheet(
-                    f"font-family: {FONT_MONO}; font-size: 23px; font-weight: 800; color: {PEARL}; "
-                    f"background: transparent; letter-spacing: 0px;"
-                )
+            label.setStyleSheet(
+                f"font-family: {FONT_MONO}; font-size: 23px; font-weight: 800; color: {PEARL}; "
+                f"background: transparent; letter-spacing: 0px;"
+            )
 
 
 class ProfitWorker(QObject):
@@ -373,7 +367,7 @@ class PRLTodayWindow(QWidget):
 
     def init_ui(self) -> None:
         self.setWindowTitle("PRL-Today")
-        self.setWindowIcon(QIcon(str(asset_path("assets", "app_icon.ico"))))
+        self.setWindowIcon(QIcon(str(asset_path("assets", "app_icon.png"))))
         self.setWindowFlags(FRAMELESS_FLAGS)
         self.setAttribute(TRANSLUCENT_BACKGROUND)
         self.setMouseTracking(True)
@@ -441,7 +435,7 @@ class PRLTodayWindow(QWidget):
         self.apply_display_level(force_resize=True)
 
     def load_logo(self) -> None:
-        pixmap = QPixmap(str(asset_path("assets", "prl_logo.svg")))
+        pixmap = QPixmap(str(asset_path("assets", "prl_logo.png")))
         if pixmap.isNull():
             self.logo_label.setText("PRL")
             self.logo_label.setStyleSheet(f"font-family: {FONT_UI}; color: {PEARL}; font-size: 10px; font-weight: 800;")
@@ -573,7 +567,7 @@ class PRLTodayWindow(QWidget):
         self.repo_button = QPushButton("stlin256/PRL-Today")
         self.repo_button.setObjectName("RepoButton")
         self.repo_button.setFixedHeight(24)
-        self.repo_button.setIcon(QIcon(str(asset_path("assets", "github_mark.svg"))))
+        self.repo_button.setIcon(QIcon(str(asset_path("assets", "github_mark.png"))))
         self.repo_button.setIconSize(QSize(15, 15))
         self.repo_button.clicked.connect(self.open_repository)
 
@@ -687,7 +681,7 @@ class PRLTodayWindow(QWidget):
 
     def init_tray(self) -> None:
         self.tray_icon = QSystemTrayIcon(self)
-        icon = QIcon(str(asset_path("assets", "app_icon.ico")))
+        icon = QIcon(str(asset_path("assets", "app_icon.png")))
         if icon.isNull():
             icon = QApplication.style().standardIcon(COMPUTER_ICON)
         self.tray_icon.setIcon(icon)

@@ -23,8 +23,8 @@ It reads live miner, pool, market, network, and FX data, then displays a continu
   - AlphaMiner, pearl algorithm, 1.00% developer fee.
   - SRBMiner, pearlhash algorithm, 3.00% developer fee.
 - Price source selection:
+  - SafeTrade public ticker API by default.
   - PRLScan.
-  - SafeTrade public ticker API.
   - SafeTrade mirror endpoints.
   - SafeTrade exchange page fallback.
 - Optional proxy support.
@@ -34,6 +34,12 @@ It reads live miner, pool, market, network, and FX data, then displays a continu
 Download the latest Windows build from the [GitHub Releases](https://github.com/stlin256/PRL-Today/releases) page.
 
 On first launch, PRL-Today opens the setup panel automatically. Enter your wallet address, select the pool/mining software/price source, then save.
+
+## Screenshots
+
+![PRL-Today floating monitor](docs/images/monitor.png)
+
+![PRL-Today settings panel](docs/images/settings.png)
 
 ## Data Refresh
 
