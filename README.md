@@ -7,11 +7,15 @@ Windows 桌面悬浮窗，用于查看 Pearl (PRL) 当天实时收益，显示�
 - 默认监控钱包：`prl1p2ka5l06wmq73kdsqec9k7fsv00jt76nfhk56e9nh82fn07qjualspfsxyp`
 - 默认矿池：AlphaPool PRL，自动从 `https://pearl.alphapool.tech/api/stats` 读取 PPLNS 手续费、出块奖励、最低支付和 stratum 信息。
 - 默认价格：`https://api.prlscan.com/v1/market/prl`，该接口包含 SafeTrade PRL/USDT provider 数据。
+- 价格源可选：PRLScan、SafeTrade、SafeTrade mirror；SafeTrade 优先读取 `https://safetrade.com/api/v2/trade/public/tickers/prlusdt`，并保留 `https://safetrade.com/exchange/PRL-USDT?type=basic` 页面解析兜底，都会走代理配置。
 - 默认汇率：`https://open.er-api.com/v6/latest/USD` 的 USD/CNY。
 - 默认代理：`http://127.0.0.1:7897`，也会写入 `HTTP_PROXY` 和 `HTTPS_PROXY`。
+- 设置页仓库链接：`https://github.com/stlin256/prl-today`。
 - Qt 悬浮窗风格参考 `minimax_moniter`：无边框置顶、半透明容器、悬停显示设置/关闭、同窗配置页、托盘菜单、拖拽和右下角缩放。
 - Qt 绑定优先尝试 PyQt6，当前机器的 PyQt6 `QtWidgets` DLL 加载失败时会自动回退到 Anaconda 已可用的 PyQt5。
-- 配置页支持改钱包、矿池、代理、手续费、手动价格、手动汇率、刷新间隔、算力模式和显示层级。
+- 配置页支持改钱包、矿池、代理、矿池手续费、挖矿工具抽水、手动价格、手动汇率、刷新间隔、算力模式、显示层级和默认货币。
+- 内置 hashrate.no PRL 预置：AlphaPool、Kryptex、Pearlhash、Luckypool 等矿池，以及 AlphaMiner 1% 和 SRBMiner 3% 挖矿软件抽水。
+- 默认货币为 `auto`：系统语言为中文时主数字显示 CNY，其他语言显示 USD。
 
 ## 刷新频率
 
@@ -54,7 +58,7 @@ py run.py --check
 悬浮窗主数字是“今天到当前时刻”的估算收益：
 
 ```text
-预计 24h PRL = 矿工算力 / 全网算力 * (86400 / 平均出块秒数) * 当前区块奖励 * (1 - 矿池费率)
+预计 24h PRL = 矿工算力 / 全网算力 * (86400 / 平均出块秒数) * 当前区块奖励 * (1 - 矿池费率) * (1 - 挖矿工具抽水)
 当天当前 PRL = max(今天已入账/待结算 PRL, 预计 24h PRL * 今天已过秒数 / 86400)
 USD = PRL * PRL/USD
 RMB = USD * USD/CNY
@@ -74,5 +78,5 @@ py -m compileall src tests
 本机已使用 Anaconda Python + PyInstaller 打包。重新打包可执行：
 
 ```powershell
-python -m PyInstaller --noconfirm --clean --windowed --name PRL-Today --paths src --hidden-import prl_profit_float.qt_app --hidden-import PyQt5.QtWidgets --exclude-module PyQt6 --add-data "config.example.json;." run.py
+python -m PyInstaller --noconfirm --clean --windowed --name PRL-Today --paths src --hidden-import prl_profit_float.qt_app --hidden-import PyQt5.QtWidgets --exclude-module PyQt6 --add-data "config.example.json;." --add-data "assets/prl_logo.svg;assets" run.py
 ```

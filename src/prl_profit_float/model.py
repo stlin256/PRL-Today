@@ -7,7 +7,7 @@ from datetime import datetime, time, timezone
 from typing import Any, Iterable
 
 from .api import DataSnapshot
-from .config import selected_pool
+from .config import selected_mining_software, selected_pool
 
 
 GRAIN = 100_000_000
@@ -33,8 +33,10 @@ class ProfitEstimate:
     observed_today_prl: float
     prl_per_second: float
     price_usd: float
+    price_source: str
     usd_cny: float
     fee_percent: float
+    tool_fee_percent: float
     hashrate_hps: float
     network_hashrate_hps: float
     block_reward_prl: float
@@ -192,13 +194,40 @@ def pool_fee(config: dict[str, Any], stats: dict[str, Any] | None) -> float:
     return number(selected_pool(config).get("default_fee_percent"), 0.0)
 
 
+def tool_fee(config: dict[str, Any]) -> float:
+    calc = config.get("calculation") or {}
+    if calc.get("tool_fee_mode", "auto") == "manual":
+        return number(calc.get("tool_fee_percent"), 1.0)
+    return number(selected_mining_software(config).get("dev_fee_percent"), 1.0)
+
+
 def price_usd(config: dict[str, Any], market: dict[str, Any] | None) -> float:
     calc = config.get("calculation") or {}
     if calc.get("price_mode") == "manual":
         return number(calc.get("manual_price_usd"), 0.0)
     if market:
-        return number(market.get("price_usd") or market.get("usd") or market.get("price"), 0.0)
+        return extract_market_price(market)
     return number(calc.get("manual_price_usd"), 0.0)
+
+
+def extract_market_price(market: dict[str, Any]) -> float:
+    for key in ("price_usd", "usd", "last", "last_price", "close", "price", "ticker_price"):
+        value = number(market.get(key), 0.0)
+        if value > 0:
+            return value
+    for container_key in ("ticker", "data", "result", "market", "payload"):
+        nested = market.get(container_key)
+        if isinstance(nested, dict):
+            value = extract_market_price(nested)
+            if value > 0:
+                return value
+    return 0.0
+
+
+def price_source(market: dict[str, Any] | None) -> str:
+    if not market:
+        return "manual"
+    return str(market.get("_source_name") or market.get("source") or market.get("provider") or "market")
 
 
 def usd_cny(config: dict[str, Any], fx: dict[str, Any] | None) -> float:
@@ -248,7 +277,9 @@ def compute_estimate(config: dict[str, Any], snapshot: DataSnapshot, now: dateti
     miner = snapshot.miner_stats
     chain = snapshot.chain
     fee = pool_fee(config, stats)
+    dev_fee = tool_fee(config)
     price = price_usd(config, snapshot.market)
+    p_source = "manual" if (config.get("calculation") or {}).get("price_mode") == "manual" else price_source(snapshot.market)
     cny = usd_cny(config, snapshot.fx)
     reward = block_reward(stats)
     net_hps = network_hashrate(stats, chain)
@@ -260,14 +291,16 @@ def compute_estimate(config: dict[str, Any], snapshot: DataSnapshot, now: dateti
     projected_prl = 0.0
     if miner_hps > 0 and net_hps > 0 and reward > 0 and avg_block_time > 0:
         share = miner_hps / net_hps
-        projected_prl = share * (86_400.0 / avg_block_time) * reward * max(0.0, 1.0 - fee / 100.0)
+        pool_keep = max(0.0, 1.0 - fee / 100.0)
+        tool_keep = max(0.0, 1.0 - dev_fee / 100.0)
+        projected_prl = share * (86_400.0 / avg_block_time) * reward * pool_keep * tool_keep
 
     estimated_so_far = projected_prl * min(max(elapsed / 86_400.0, 0.0), 1.0)
     today_prl = max(observed, estimated_so_far)
     prl_per_second = projected_prl / 86_400.0 if projected_prl > 0 else 0.0
     today_usd = today_prl * price
     projected_usd = projected_prl * price
-    source = f"{h_source}, fee {fee:.2f}%, price ${price:.4f}, USD/CNY {cny:.4f}"
+    source = f"{h_source}, pool {fee:.2f}%, tool {dev_fee:.2f}%, price ${price:.4f} ({p_source}), USD/CNY {cny:.4f}"
     return ProfitEstimate(
         today_prl=today_prl,
         today_usd=today_usd,
@@ -278,8 +311,10 @@ def compute_estimate(config: dict[str, Any], snapshot: DataSnapshot, now: dateti
         observed_today_prl=observed,
         prl_per_second=prl_per_second,
         price_usd=price,
+        price_source=p_source,
         usd_cny=cny,
         fee_percent=fee,
+        tool_fee_percent=dev_fee,
         hashrate_hps=miner_hps,
         network_hashrate_hps=net_hps,
         block_reward_prl=reward,

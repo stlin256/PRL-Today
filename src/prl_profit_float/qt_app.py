@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import copy
+import locale
 import math
+import os
 import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 try:
-    from PyQt6.QtCore import QObject, QEasingCurve, QPoint, QPropertyAnimation, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
-    from PyQt6.QtGui import QAction
+    from PyQt6.QtCore import QObject, QEasingCurve, QPoint, QPropertyAnimation, QThread, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
+    from PyQt6.QtGui import QAction, QDesktopServices, QPixmap
     from PyQt6.QtWidgets import (
         QApplication,
         QComboBox,
@@ -34,7 +37,8 @@ try:
 
     QT_API = "PyQt6"
 except ImportError:
-    from PyQt5.QtCore import QObject, QEasingCurve, QPoint, QPropertyAnimation, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
+    from PyQt5.QtCore import QObject, QEasingCurve, QPoint, QPropertyAnimation, QThread, QTimer, Qt, QUrl, pyqtSignal, pyqtSlot
+    from PyQt5.QtGui import QDesktopServices, QPixmap
     from PyQt5.QtWidgets import (
         QAction,
         QApplication,
@@ -60,14 +64,25 @@ except ImportError:
     QT_API = "PyQt5"
 
 from .api import SOURCE_FIELDS, DataSnapshot, HttpClient, apply_proxy_env, fetch_snapshot, merge_snapshot
-from .config import CONFIG_PATH, pool_names, refresh_seconds, save_config
+from .config import BUNDLE_ROOT, CONFIG_PATH, market_source_names, mining_software_names, pool_names, refresh_seconds, save_config
 from .model import ProfitEstimate, SmoothValue, compute_estimate, seconds_today
 
 
-ACCENT = "#D81B60"
-ACCENT_LIGHT = "#F06292"
-BG = "#141414"
-TEXT_MUTED = "#9A9A9A"
+FONT_UI = "'Urbanist', 'Inter', 'Segoe UI'"
+FONT_MONO = "'Source Code Pro', 'Cascadia Mono', 'Consolas'"
+FONT_SERIF = "'Source Serif 4', 'Georgia'"
+BG = "#111111"
+PANEL = "#1F1F1F"
+PANEL_SOFT = "#2A2926"
+PEARL = "#F0EFEA"
+SHELL = "#D8D0C5"
+SHELL_DARK = "#8E867A"
+ACCENT = "#E6D1AD"
+ACCENT_LIGHT = "#FFF7E6"
+TEXT_MUTED = "#AFA79C"
+INPUT_BG = "#171717"
+INPUT_BORDER = "#5C564E"
+LOADING_ACCENT = "#E4B7FF"
 
 if QT_API == "PyQt6":
     FRAMELESS_FLAGS = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
@@ -80,6 +95,8 @@ if QT_API == "PyQt6":
     LEFT_BUTTON = Qt.MouseButton.LeftButton
     TRAY_TRIGGER = QSystemTrayIcon.ActivationReason.Trigger
     TRAY_DOUBLE_CLICK = QSystemTrayIcon.ActivationReason.DoubleClick
+    KEEP_ASPECT = Qt.AspectRatioMode.KeepAspectRatio
+    SMOOTH_TRANSFORM = Qt.TransformationMode.SmoothTransformation
 else:
     FRAMELESS_FLAGS = Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
     TRANSLUCENT_BACKGROUND = Qt.WA_TranslucentBackground
@@ -91,6 +108,8 @@ else:
     LEFT_BUTTON = Qt.LeftButton
     TRAY_TRIGGER = QSystemTrayIcon.Trigger
     TRAY_DOUBLE_CLICK = QSystemTrayIcon.DoubleClick
+    KEEP_ASPECT = Qt.KeepAspectRatio
+    SMOOTH_TRANSFORM = Qt.SmoothTransformation
 
 
 def clean_level(value: Any) -> str:
@@ -126,6 +145,28 @@ def format_hps(value: float) -> str:
     return f"{value:.0f} H/s"
 
 
+def asset_path(*parts: str) -> Path:
+    return BUNDLE_ROOT.joinpath(*parts)
+
+
+def system_prefers_cny() -> bool:
+    values = [
+        locale.getlocale()[0] or "",
+        locale.getlocale(locale.LC_CTYPE)[0] or "",
+        os.environ.get("LANG", ""),
+        os.environ.get("LANGUAGE", ""),
+    ]
+    text = " ".join(values).lower()
+    return text.startswith("zh") or "chinese" in text
+
+
+def display_currency(config: dict[str, Any]) -> str:
+    requested = str((config.get("display") or {}).get("currency", "auto")).strip().lower()
+    if requested in {"usd", "cny"}:
+        return requested
+    return "cny" if system_prefers_cny() else "usd"
+
+
 class ProfitWorker(QObject):
     data_updated = pyqtSignal(object)
 
@@ -146,6 +187,14 @@ class ProfitWorker(QObject):
             self.apply_pending_config()
             due_sources = self.due_sources()
             if due_sources:
+                self.data_updated.emit(
+                    {
+                        "loading": True,
+                        "last_updates": dict(self.last_updates),
+                        "intervals": self.intervals(),
+                        "sources": list(due_sources),
+                    }
+                )
                 update = fetch_snapshot(self.config, self.client, due_sources)
                 merge_snapshot(self.snapshot, update)
                 now = datetime.now().astimezone()
@@ -203,10 +252,14 @@ class PRLTodayWindow(QWidget):
         super().__init__()
         self.config = copy.deepcopy(config)
         self.display_level = clean_level((self.config.get("display") or {}).get("level"))
+        self.currency = display_currency(self.config)
         self.bg_opacity = self.opacity_to_int((self.config.get("window") or {}).get("alpha", 0.96))
         self.last_estimate: ProfitEstimate | None = None
         self.last_updates: dict[str, datetime | None] = {source: None for source in SOURCE_FIELDS}
         self.intervals: dict[str, int] = {source: refresh_seconds(self.config, f"{source}_seconds") for source in SOURCE_FIELDS}
+        self.loading = True
+        self.loading_phase = 0
+        self.loading_sources: list[str] = ["miner", "pool", "market"]
         self.smoother = SmoothValue()
         self.thread: QThread | None = None
         self.worker: ProfitWorker | None = None
@@ -219,6 +272,9 @@ class PRLTodayWindow(QWidget):
         self.tick_timer = QTimer(self)
         self.tick_timer.timeout.connect(self.update_tick)
         self.tick_timer.start(refresh_seconds(self.config, "ui_tick_seconds") * 1000)
+        self.loading_timer = QTimer(self)
+        self.loading_timer.timeout.connect(self.animate_loading)
+        self.loading_timer.start(180)
         self.restore_geometry()
 
     def init_ui(self) -> None:
@@ -241,9 +297,16 @@ class PRLTodayWindow(QWidget):
         self.header.setFixedHeight(24)
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(0)
+        header_layout.setSpacing(5)
+        self.logo_label = QLabel()
+        self.logo_label.setObjectName("LogoLabel")
+        self.logo_label.setFixedSize(38, 16)
+        self.load_logo()
+        header_layout.addWidget(self.logo_label)
         self.title_label = QLabel("PRL-Today")
-        self.title_label.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {ACCENT_LIGHT};")
+        self.title_label.setStyleSheet(
+            f"font-family: {FONT_UI}; font-size: 10px; font-weight: 700; color: {PEARL};"
+        )
         header_layout.addWidget(self.title_label)
         self.right_container = QWidget()
         header_layout.addWidget(self.right_container, 1)
@@ -282,18 +345,28 @@ class PRLTodayWindow(QWidget):
         self.update_style(False)
         self.apply_display_level(force_resize=True)
 
+    def load_logo(self) -> None:
+        pixmap = QPixmap(str(asset_path("assets", "prl_logo.svg")))
+        if pixmap.isNull():
+            self.logo_label.setText("PRL")
+            self.logo_label.setStyleSheet(f"font-family: {FONT_UI}; color: {PEARL}; font-size: 10px; font-weight: 800;")
+            return
+        self.logo_label.setPixmap(pixmap.scaled(self.logo_label.size(), KEEP_ASPECT, SMOOTH_TRANSFORM))
+
     def build_monitor_view(self) -> QWidget:
         view = QWidget()
         layout = QVBoxLayout(view)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        self.amount_label = QLabel("CNY --")
-        self.amount_label.setStyleSheet("font-size: 24px; font-weight: bold; color: white; letter-spacing: 0px;")
+        self.amount_label = QLabel("Loading")
+        self.amount_label.setStyleSheet(
+            f"font-family: {FONT_MONO}; font-size: 23px; font-weight: 700; color: {PEARL}; letter-spacing: 0px;"
+        )
         self.amount_label.setMinimumHeight(30)
 
-        self.sub_label = QLabel("$ --  |  -- PRL")
-        self.sub_label.setStyleSheet(f"font-size: 10px; color: {ACCENT_LIGHT}; font-weight: bold;")
+        self.sub_label = QLabel("miner / pool / market")
+        self.sub_label.setStyleSheet(f"font-family: {FONT_UI}; font-size: 10px; color: {SHELL}; font-weight: 700;")
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(2)
@@ -308,14 +381,14 @@ class PRLTodayWindow(QWidget):
         self.left_metric = QLabel("hash --")
         self.right_metric = QLabel("price --")
         for label in (self.left_metric, self.right_metric):
-            label.setStyleSheet("font-size: 10px; color: #DDD;")
+            label.setStyleSheet(f"font-family: {FONT_UI}; font-size: 10px; color: {SHELL};")
         metric_layout.addWidget(self.left_metric)
         metric_layout.addStretch()
         metric_layout.addWidget(self.right_metric)
 
         self.detail_label = QLabel("")
         self.detail_label.setWordWrap(True)
-        self.detail_label.setStyleSheet(f"font-size: 9px; color: {TEXT_MUTED}; line-height: 120%;")
+        self.detail_label.setStyleSheet(f"font-family: {FONT_UI}; font-size: 9px; color: {TEXT_MUTED}; line-height: 120%;")
 
         layout.addWidget(self.amount_label)
         layout.addWidget(self.sub_label)
@@ -327,15 +400,18 @@ class PRLTodayWindow(QWidget):
 
     def build_config_view(self) -> QWidget:
         view = QWidget()
+        view.setObjectName("ConfigView")
         layout = QVBoxLayout(view)
         layout.setContentsMargins(0, 4, 0, 4)
         layout.setSpacing(5)
 
         scroll = QScrollArea()
+        scroll.setObjectName("ConfigScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(NO_FRAME)
         scroll.setHorizontalScrollBarPolicy(SCROLLBAR_OFF)
         form_host = QWidget()
+        form_host.setObjectName("ConfigForm")
         form = QFormLayout(form_host)
         form.setContentsMargins(0, 0, 4, 0)
         form.setSpacing(5)
@@ -348,15 +424,30 @@ class PRLTodayWindow(QWidget):
         self.combo_level = QComboBox()
         self.combo_level.addItems(["lite", "standard", "detail"])
         self.combo_level.setCurrentText(self.display_level)
+        self.combo_currency = QComboBox()
+        self.combo_currency.addItems(["auto", "usd", "cny"])
+        self.combo_currency.setCurrentText(str((self.config.get("display") or {}).get("currency", "auto")).lower())
         self.combo_hashrate = QComboBox()
         self.combo_hashrate.addItems(["fit", "miner_1h", "miner_24h", "worker_live"])
         self.combo_hashrate.setCurrentText(str((self.config.get("calculation") or {}).get("hashrate_mode", "fit")))
+        self.combo_mining_software = QComboBox()
+        self.combo_mining_software.addItems(mining_software_names(self.config) or ["AlphaMiner"])
+        self.combo_mining_software.setCurrentText(str(self.config.get("selected_mining_software", "AlphaMiner")))
+        self.combo_mining_software.currentTextChanged.connect(self.sync_tool_fee_from_software)
 
         calc = self.config.get("calculation") or {}
         self.combo_fee_mode = QComboBox()
         self.combo_fee_mode.addItems(["auto", "manual"])
         self.combo_fee_mode.setCurrentText(str(calc.get("fee_mode", "auto")))
         self.input_fee = QLineEdit(str(calc.get("fee_override_percent", 3.0)))
+        self.combo_tool_fee_mode = QComboBox()
+        self.combo_tool_fee_mode.addItems(["auto", "manual"])
+        self.combo_tool_fee_mode.setCurrentText(str(calc.get("tool_fee_mode", "auto")))
+        self.combo_tool_fee_mode.currentTextChanged.connect(self.sync_tool_fee_from_software)
+        self.input_tool_fee = QLineEdit(str(calc.get("tool_fee_percent", 1.0)))
+        self.combo_market_source = QComboBox()
+        self.combo_market_source.addItems(market_source_names(self.config) or ["PRLScan"])
+        self.combo_market_source.setCurrentText(str(self.config.get("selected_market_source", "PRLScan")))
         self.combo_price_mode = QComboBox()
         self.combo_price_mode.addItems(["auto", "manual"])
         self.combo_price_mode.setCurrentText(str(calc.get("price_mode", "auto")))
@@ -383,18 +474,30 @@ class PRLTodayWindow(QWidget):
         self.slider_opacity.setValue(self.bg_opacity)
         self.slider_opacity.valueChanged.connect(self.on_opacity_changed)
 
+        repo_url = str(self.config.get("repository_url") or "https://github.com/stlin256/prl-today")
+        self.repo_link = QLabel(f'<a href="{repo_url}">github.com/stlin256/prl-today</a>')
+        self.repo_link.setOpenExternalLinks(True)
+        self.repo_link.setTextInteractionFlags(self.repo_link.textInteractionFlags())
+        self.repo_link.setObjectName("RepoLink")
+
         self.configure_inputs()
-        form.addRow("Wallet", self.input_miner)
-        form.addRow("Pool", self.combo_pool)
-        form.addRow("Level", self.combo_level)
-        form.addRow("Hashrate", self.combo_hashrate)
-        form.addRow("Fee", self.row_widget(self.combo_fee_mode, self.input_fee))
-        form.addRow("PRL/USD", self.row_widget(self.combo_price_mode, self.input_price))
-        form.addRow("USD/CNY", self.row_widget(self.combo_fx_mode, self.input_fx))
-        form.addRow("Proxy", self.row_widget(self.combo_proxy, self.input_proxy))
-        form.addRow("Refresh", self.row_widget(self.input_miner_refresh, self.input_pool_refresh, self.input_market_refresh))
-        form.addRow("Chain/FX", self.row_widget(self.input_chain_refresh, self.input_fx_refresh))
-        form.addRow("Opacity", self.slider_opacity)
+        self.sync_tool_fee_from_software()
+        form.addRow(self.form_label("Wallet"), self.input_miner)
+        form.addRow(self.form_label("Pool"), self.combo_pool)
+        form.addRow(self.form_label("Level"), self.combo_level)
+        form.addRow(self.form_label("Currency"), self.combo_currency)
+        form.addRow(self.form_label("Hashrate"), self.combo_hashrate)
+        form.addRow(self.form_label("Miner soft"), self.combo_mining_software)
+        form.addRow(self.form_label("Pool fee"), self.row_widget(self.combo_fee_mode, self.input_fee))
+        form.addRow(self.form_label("Tool fee"), self.row_widget(self.combo_tool_fee_mode, self.input_tool_fee))
+        form.addRow(self.form_label("Price src"), self.combo_market_source)
+        form.addRow(self.form_label("PRL/USD"), self.row_widget(self.combo_price_mode, self.input_price))
+        form.addRow(self.form_label("USD/CNY"), self.row_widget(self.combo_fx_mode, self.input_fx))
+        form.addRow(self.form_label("Proxy"), self.row_widget(self.combo_proxy, self.input_proxy))
+        form.addRow(self.form_label("Refresh"), self.row_widget(self.input_miner_refresh, self.input_pool_refresh, self.input_market_refresh))
+        form.addRow(self.form_label("Chain/FX"), self.row_widget(self.input_chain_refresh, self.input_fx_refresh))
+        form.addRow(self.form_label("Opacity"), self.slider_opacity)
+        form.addRow(self.form_label("Repo"), self.repo_link)
         scroll.setWidget(form_host)
 
         self.config_msg = QLabel("")
@@ -408,6 +511,13 @@ class PRLTodayWindow(QWidget):
         layout.addWidget(save_button)
         return view
 
+    def form_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("FormLabel")
+        label.setMinimumWidth(66)
+        label.setStyleSheet(f"color: {SHELL}; font-family: {FONT_UI}; font-size: 9px; font-weight: 700;")
+        return label
+
     def row_widget(self, *widgets: QWidget) -> QWidget:
         host = QWidget()
         layout = QHBoxLayout(host)
@@ -418,9 +528,20 @@ class PRLTodayWindow(QWidget):
         return host
 
     def configure_inputs(self) -> None:
+        input_style = (
+            f"background: {INPUT_BG}; color: {PEARL}; border: 1px solid {INPUT_BORDER}; "
+            f"border-radius: 4px; padding: 3px 6px; font-family: {FONT_UI}; font-size: 9px; "
+            f"selection-background-color: {ACCENT}; selection-color: #111111;"
+        )
+        combo_style = (
+            f"QComboBox {{ {input_style} }}"
+            f"QComboBox QAbstractItemView {{ background-color: {PANEL}; color: {PEARL}; "
+            f"selection-background-color: {ACCENT}; selection-color: #111111; outline: none; border: 1px solid {ACCENT}; }}"
+        )
         text_inputs = [
             self.input_miner,
             self.input_fee,
+            self.input_tool_fee,
             self.input_price,
             self.input_fx,
             self.input_proxy,
@@ -432,8 +553,37 @@ class PRLTodayWindow(QWidget):
         ]
         for widget in text_inputs:
             widget.setMinimumHeight(22)
+            widget.setStyleSheet(input_style)
+        for widget in (
+            self.combo_pool,
+            self.combo_level,
+            self.combo_currency,
+            self.combo_hashrate,
+            self.combo_mining_software,
+            self.combo_fee_mode,
+            self.combo_tool_fee_mode,
+            self.combo_market_source,
+            self.combo_price_mode,
+            self.combo_fx_mode,
+            self.combo_proxy,
+        ):
+            widget.setMinimumHeight(22)
+            widget.setStyleSheet(combo_style)
         for widget in (self.input_miner_refresh, self.input_pool_refresh, self.input_market_refresh, self.input_chain_refresh, self.input_fx_refresh):
             widget.setMaximumWidth(54)
+
+    def sync_tool_fee_from_software(self) -> None:
+        if not hasattr(self, "combo_tool_fee_mode") or not hasattr(self, "input_tool_fee"):
+            return
+        auto = self.combo_tool_fee_mode.currentText() == "auto"
+        self.input_tool_fee.setEnabled(not auto)
+        if not auto:
+            return
+        selected = self.combo_mining_software.currentText()
+        for item in self.config.get("mining_software", []):
+            if item.get("name") == selected:
+                self.input_tool_fee.setText(str(item.get("dev_fee_percent", 1.0)))
+                return
 
     def init_tray(self) -> None:
         self.tray_icon = QSystemTrayIcon(self)
@@ -459,52 +609,88 @@ class PRLTodayWindow(QWidget):
         self.container.setStyleSheet(
             f"""
             #MainContainer {{
-                background-color: rgba(20, 20, 20, {self.bg_opacity});
+                background-color: rgba(17, 17, 17, {self.bg_opacity});
                 border: 2px solid {border};
                 border-radius: 12px;
             }}
+            #LogoLabel {{
+                background-color: transparent;
+            }}
             #HeaderBtn {{
                 background-color: transparent;
-                color: white;
+                color: {PEARL};
                 border: none;
+                font-family: {FONT_UI};
                 font-size: 13px;
-                font-weight: bold;
+                font-weight: 700;
             }}
             QPushButton#HeaderBtn:hover {{ color: {ACCENT_LIGHT}; }}
             QPushButton#SaveBtn {{
                 background: {ACCENT};
-                color: white;
+                color: #111111;
                 border: none;
                 border-radius: 4px;
                 min-height: 24px;
-                font-weight: bold;
+                font-family: {FONT_UI};
+                font-weight: 800;
+            }}
+            QPushButton#SaveBtn:hover {{
+                background: {ACCENT_LIGHT};
             }}
             QLineEdit, QComboBox {{
-                background: rgba(255,255,255,22);
-                color: white;
-                border: 1px solid #444;
+                background: {INPUT_BG};
+                color: {PEARL};
+                border: 1px solid {INPUT_BORDER};
                 border-radius: 4px;
-                padding: 2px 5px;
+                padding: 3px 6px;
+                font-family: {FONT_UI};
                 font-size: 9px;
+                selection-background-color: {ACCENT};
+                selection-color: #111111;
+            }}
+            QLineEdit:focus, QComboBox:focus {{
+                border: 1px solid {ACCENT};
+            }}
+            QLineEdit:disabled, QComboBox:disabled {{
+                color: {SHELL};
+                background: {PANEL};
             }}
             QComboBox QAbstractItemView {{
-                background-color: #1A1A1A;
-                color: white;
+                background-color: {PANEL};
+                color: {PEARL};
                 selection-background-color: {ACCENT};
+                selection-color: #111111;
                 outline: none;
                 border: 1px solid {ACCENT};
             }}
-            QFormLayout QLabel {{
-                color: #AAA;
+            QLabel#FormLabel {{
+                color: {SHELL};
+                font-family: {FONT_UI};
+                font-size: 9px;
+                font-weight: 700;
+            }}
+            QLabel#RepoLink {{
+                color: {ACCENT};
+                font-family: {FONT_UI};
                 font-size: 9px;
             }}
-            QScrollArea {{
+            QLabel#RepoLink a {{
+                color: {ACCENT};
+                text-decoration: none;
+            }}
+            QWidget#ConfigView, QWidget#ConfigForm {{
+                background: transparent;
+            }}
+            QScrollArea#ConfigScroll {{
                 background: transparent;
                 border: none;
             }}
+            QScrollArea#ConfigScroll > QWidget > QWidget {{
+                background: transparent;
+            }}
             QSlider::groove:horizontal {{
                 height: 3px;
-                background: #444;
+                background: {INPUT_BORDER};
                 border-radius: 1px;
             }}
             QSlider::handle:horizontal {{
@@ -516,17 +702,18 @@ class PRLTodayWindow(QWidget):
             """
         )
 
-    def update_progress_style(self) -> None:
+    def update_progress_style(self, loading: bool = False) -> None:
+        chunk = LOADING_ACCENT if loading else ACCENT
         self.progress_bar.setStyleSheet(
             f"""
             QProgressBar {{
-                background-color: #444;
+                background-color: {PANEL_SOFT};
                 border: none;
                 border-radius: 1px;
                 margin: 3px 0;
             }}
             QProgressBar::chunk {{
-                background-color: {ACCENT};
+                background-color: {chunk};
                 border-radius: 1px;
             }}
             """
@@ -610,7 +797,10 @@ class PRLTodayWindow(QWidget):
         cfg = copy.deepcopy(self.config)
         cfg["miner_address"] = miner
         cfg["selected_pool"] = self.combo_pool.currentText()
+        cfg["selected_mining_software"] = self.combo_mining_software.currentText()
+        cfg["selected_market_source"] = self.combo_market_source.currentText()
         cfg.setdefault("display", {})["level"] = self.combo_level.currentText()
+        cfg["display"]["currency"] = self.combo_currency.currentText()
         cfg.setdefault("proxy", {})["enabled"] = self.combo_proxy.currentText() == "enabled"
         cfg["proxy"]["url"] = self.input_proxy.text().strip()
         cfg["proxy"]["use_env"] = True
@@ -619,6 +809,8 @@ class PRLTodayWindow(QWidget):
         calc["hashrate_mode"] = self.combo_hashrate.currentText()
         calc["fee_mode"] = self.combo_fee_mode.currentText()
         calc["fee_override_percent"] = safe_float(self.input_fee.text(), float(calc.get("fee_override_percent", 3.0)))
+        calc["tool_fee_mode"] = self.combo_tool_fee_mode.currentText()
+        calc["tool_fee_percent"] = safe_float(self.input_tool_fee.text(), float(calc.get("tool_fee_percent", 1.0)))
         calc["price_mode"] = self.combo_price_mode.currentText()
         calc["manual_price_usd"] = safe_float(self.input_price.text(), float(calc.get("manual_price_usd", 0.52)))
         calc["fx_mode"] = self.combo_fx_mode.currentText()
@@ -639,7 +831,10 @@ class PRLTodayWindow(QWidget):
         save_config(cfg, CONFIG_PATH)
         self.config = cfg
         self.display_level = clean_level((cfg.get("display") or {}).get("level"))
+        self.currency = display_currency(cfg)
         self.intervals = {source: refresh_seconds(cfg, f"{source}_seconds") for source in SOURCE_FIELDS}
+        self.loading = True
+        self.loading_sources = ["miner", "pool", "market"]
         self.tick_timer.start(refresh_seconds(cfg, "ui_tick_seconds") * 1000)
         if self.worker:
             self.worker.update_config(copy.deepcopy(cfg))
@@ -662,9 +857,19 @@ class PRLTodayWindow(QWidget):
 
     @pyqtSlot(object)
     def on_data_updated(self, data: dict[str, Any]) -> None:
+        if data.get("loading"):
+            self.loading = True
+            self.loading_sources = [str(source) for source in data.get("sources", [])]
+            self.last_updates = data.get("last_updates") or self.last_updates
+            self.intervals = data.get("intervals") or self.intervals
+            self.animate_loading()
+            return
         estimate = data.get("estimate")
         if not isinstance(estimate, ProfitEstimate):
             return
+        self.loading = False
+        self.update_progress_style(False)
+        self.progress_bar.setRange(0, 86400)
         self.last_estimate = estimate
         self.last_updates = data.get("last_updates") or self.last_updates
         self.intervals = data.get("intervals") or self.intervals
@@ -678,17 +883,50 @@ class PRLTodayWindow(QWidget):
         prl = self.smoother.value()
         usd = prl * estimate.price_usd
         cny = usd * estimate.usd_cny
-        self.amount_label.setText(f"CNY {cny:.6f}")
-        self.sub_label.setText(f"${usd:.6f}  |  {prl:.6f} PRL")
+        self.amount_label.setText(self.primary_amount(usd, cny))
+        self.sub_label.setText(self.secondary_amount(usd, cny, prl))
         elapsed, _ = seconds_today()
         self.progress_bar.setValue(int(elapsed))
         self.left_metric.setText(format_hps(estimate.hashrate_hps))
-        self.right_metric.setText(f"${estimate.price_usd:.6f}  fee {estimate.fee_percent:.2f}%")
+        self.right_metric.setText(
+            f"${estimate.price_usd:.6f} {estimate.price_source}  pool {estimate.fee_percent:.2f}%  tool {estimate.tool_fee_percent:.2f}%"
+        )
         status = "ERR" if estimate.errors else estimate.computed_at.strftime("%H:%M:%S")
+        if self.loading:
+            status = self.loading_status()
         self.status_label.setText(status)
         self.status_label.adjustSize()
         self.update_header_positions(self.underMouse())
         self.update_detail_text(estimate)
+
+    def animate_loading(self) -> None:
+        if not self.loading:
+            return
+        self.loading_phase = (self.loading_phase + 1) % 100
+        dots = "." * ((self.loading_phase // 8) % 4)
+        if self.last_estimate is None:
+            self.amount_label.setText(f"Loading{dots}")
+            self.sub_label.setText("sync miner / pool / market")
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(self.loading_phase)
+            self.update_progress_style(True)
+        self.status_label.setText(self.loading_status())
+        self.status_label.adjustSize()
+        self.update_header_positions(self.underMouse())
+
+    def loading_status(self) -> str:
+        sources = "/".join(self.loading_sources[:3]) if self.loading_sources else "data"
+        return f"sync {sources}"
+
+    def primary_amount(self, usd: float, cny: float) -> str:
+        if self.currency == "cny":
+            return f"CNY {cny:.6f}"
+        return f"${usd:.6f}"
+
+    def secondary_amount(self, usd: float, cny: float, prl: float) -> str:
+        if self.currency == "cny":
+            return f"${usd:.6f}  |  {prl:.6f} PRL"
+        return f"CNY {cny:.6f}  |  {prl:.6f} PRL"
 
     def update_detail_text(self, estimate: ProfitEstimate) -> None:
         if self.display_level != "detail":
@@ -705,6 +943,7 @@ class PRLTodayWindow(QWidget):
         self.detail_label.setText(
             f"24h CNY {estimate.projected_24h_cny:.6f} | USD {estimate.projected_24h_usd:.6f} | PRL {estimate.projected_24h_prl:.6f}\n"
             f"net {format_hps(estimate.network_hashrate_hps)} | block {estimate.block_time_seconds:.2f}s | reward {estimate.block_reward_prl:.4f}\n"
+            f"fees pool {estimate.fee_percent:.2f}% | tool {estimate.tool_fee_percent:.2f}%\n"
             f"{refresh_text}\n"
             f"last {latest}\n"
             f"{errors}"

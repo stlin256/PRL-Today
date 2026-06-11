@@ -10,9 +10,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from prl_profit_float.api import DataSnapshot
+from prl_profit_float.api import DataSnapshot, parse_safetrade_page
 from prl_profit_float.config import DEFAULT_CONFIG
-from prl_profit_float.model import compute_estimate, fit_hashrate_hps, parse_hashrate, today_observed_prl
+from prl_profit_float.model import compute_estimate, extract_market_price, fit_hashrate_hps, parse_hashrate, today_observed_prl
 
 
 class ModelTest(unittest.TestCase):
@@ -67,8 +67,17 @@ class ModelTest(unittest.TestCase):
         )
         self.assertGreater(estimate.projected_24h_prl, 0)
         self.assertAlmostEqual(estimate.fee_percent, 3.0)
+        self.assertAlmostEqual(estimate.tool_fee_percent, 1.0)
         self.assertAlmostEqual(estimate.price_usd, 0.5201)
+        self.assertEqual(estimate.price_source, "market")
         self.assertAlmostEqual(estimate.usd_cny, 6.785295)
+
+    def test_extract_market_price_supports_safetrade_shapes(self) -> None:
+        self.assertAlmostEqual(extract_market_price({"last": "0.6000"}), 0.6)
+        self.assertAlmostEqual(extract_market_price({"ticker": {"last_price": "0.6100"}}), 0.61)
+
+    def test_parse_safetrade_page_embedded_price(self) -> None:
+        self.assertAlmostEqual(parse_safetrade_page('window.__DATA__={"last":"0.6200"}')["price_usd"], 0.62)
 
 
 if __name__ == "__main__":

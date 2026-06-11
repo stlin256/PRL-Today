@@ -5,7 +5,7 @@ a = Analysis(
     ['run.py'],
     pathex=['src'],
     binaries=[],
-    datas=[('config.example.json', '.')],
+    datas=[('config.example.json', '.'), ('assets/prl_logo.svg', 'assets')],
     hiddenimports=['prl_profit_float.qt_app', 'PyQt5.QtWidgets'],
     hookspath=[],
     hooksconfig={},
