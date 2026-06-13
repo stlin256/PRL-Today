@@ -28,6 +28,9 @@ class ApiError(RuntimeError):
     pass
 
 
+_APPLIED_PROXY_URL: str | None = None
+
+
 @dataclass(slots=True)
 class DataSnapshot:
     pool_stats: dict[str, Any] | None = None
@@ -48,7 +51,12 @@ class HttpClient:
         if proxy.get("enabled", True):
             proxy_url = str(proxy.get("url") or "").strip()
             if proxy_url:
-                handlers.append(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
+                try:
+                    proxy_url = normalize_http_url(proxy_url)
+                except ApiError:
+                    handlers.append(urllib.request.ProxyHandler({}))
+                else:
+                    handlers.append(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
             elif proxy.get("use_env", True):
                 handlers.append(urllib.request.ProxyHandler())
             else:
@@ -68,6 +76,7 @@ class HttpClient:
         return data
 
     def get_text(self, url: str, accept: str = "*/*") -> str:
+        url = normalize_http_url(url)
         req = urllib.request.Request(
             url,
             headers={
@@ -87,10 +96,17 @@ class HttpClient:
         return body.decode("utf-8", errors="replace")
 
 
+def normalize_http_url(url: str) -> str:
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ApiError(f"unsupported URL: {url}")
+    return urllib.parse.urlunparse(parsed)
+
+
 def join_url(base: str, path: str) -> str:
     if path.startswith("http://") or path.startswith("https://"):
-        return path
-    return urllib.parse.urljoin(base.rstrip("/") + "/", path.lstrip("/"))
+        return normalize_http_url(path)
+    return normalize_http_url(urllib.parse.urljoin(base.rstrip("/") + "/", path.lstrip("/")))
 
 
 def miner_url(config: dict[str, Any]) -> str:
@@ -198,10 +214,10 @@ def fetch_snapshot(
         if not field_name:
             snapshot.errors.append(f"unknown source: {source}")
             continue
-        url = source_url(config, source)
-        if not url:
-            continue
         try:
+            url = source_url(config, source)
+            if not url:
+                continue
             if source == "market":
                 data = fetch_market(config, client)
             else:
@@ -223,11 +239,30 @@ def merge_snapshot(base: DataSnapshot, update: DataSnapshot) -> DataSnapshot:
 
 
 def apply_proxy_env(config: dict[str, Any]) -> None:
+    global _APPLIED_PROXY_URL
     proxy = config.get("proxy") or {}
     if not proxy.get("enabled", True):
+        clear_applied_proxy_env()
         return
     url = str(proxy.get("url") or "").strip()
     if not url:
+        clear_applied_proxy_env()
+        return
+    try:
+        url = normalize_http_url(url)
+    except ApiError:
+        clear_applied_proxy_env()
         return
     os.environ["HTTP_PROXY"] = url
     os.environ["HTTPS_PROXY"] = url
+    _APPLIED_PROXY_URL = url
+
+
+def clear_applied_proxy_env() -> None:
+    global _APPLIED_PROXY_URL
+    if not _APPLIED_PROXY_URL:
+        return
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        if os.environ.get(key) == _APPLIED_PROXY_URL:
+            os.environ.pop(key, None)
+    _APPLIED_PROXY_URL = None

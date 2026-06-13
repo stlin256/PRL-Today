@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 import time
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -63,8 +64,17 @@ except ImportError:
 
     QT_API = "PyQt5"
 
-from .api import SOURCE_FIELDS, DataSnapshot, HttpClient, apply_proxy_env, fetch_snapshot, merge_snapshot
-from .config import BUNDLE_ROOT, CONFIG_PATH, market_source_names, mining_software_names, pool_names, refresh_seconds, save_config
+from .api import SOURCE_FIELDS, ApiError, DataSnapshot, HttpClient, apply_proxy_env, fetch_snapshot, merge_snapshot, normalize_http_url
+from .config import (
+    BUNDLE_ROOT,
+    CONFIG_PATH,
+    market_source_names,
+    miner_address_error,
+    mining_software_names,
+    pool_names,
+    refresh_seconds,
+    save_config,
+)
 from .model import ProfitEstimate, SmoothValue, compute_estimate, seconds_today
 
 
@@ -83,6 +93,8 @@ TEXT_MUTED = "#AFA79C"
 INPUT_BG = "#171717"
 INPUT_BORDER = "#5C564E"
 LOADING_ACCENT = "#E4B7FF"
+REPOSITORY_FALLBACK_URL = "https://github.com/stlin256/prl-today"
+TRUSTED_REPOSITORY_HOSTS = {"github.com", "www.github.com"}
 
 if QT_API == "PyQt6":
     FRAMELESS_FLAGS = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
@@ -619,7 +631,18 @@ class PRLTodayWindow(QWidget):
         return host
 
     def open_repository(self) -> None:
-        QDesktopServices.openUrl(QUrl(self.repo_url))
+        QDesktopServices.openUrl(QUrl(self.safe_repository_url(self.repo_url)))
+
+    @staticmethod
+    def safe_repository_url(url: str) -> str:
+        try:
+            normalized = normalize_http_url(url)
+        except ApiError:
+            return REPOSITORY_FALLBACK_URL
+        parsed = urllib.parse.urlparse(normalized)
+        if parsed.scheme == "https" and parsed.netloc.lower() in TRUSTED_REPOSITORY_HOSTS:
+            return normalized
+        return REPOSITORY_FALLBACK_URL
 
     def configure_inputs(self) -> None:
         input_style = (
@@ -947,9 +970,18 @@ class PRLTodayWindow(QWidget):
 
     def save_config_action(self) -> None:
         miner = self.input_miner.text().strip()
-        if not miner:
-            self.config_msg.setText("Wallet is required")
+        error = miner_address_error(miner)
+        if error:
+            self.config_msg.setText(error)
             return
+        proxy_enabled = self.combo_proxy.currentText() == "enabled"
+        proxy_url = self.input_proxy.text().strip()
+        if proxy_enabled and proxy_url:
+            try:
+                proxy_url = normalize_http_url(proxy_url)
+            except ApiError:
+                self.config_msg.setText("Proxy must be an http(s) URL")
+                return
 
         cfg = copy.deepcopy(self.config)
         cfg["miner_address"] = miner
@@ -959,8 +991,8 @@ class PRLTodayWindow(QWidget):
         cfg.setdefault("display", {})["level"] = self.combo_level.currentText()
         cfg["display"]["currency"] = self.combo_currency.currentText()
         cfg["display"]["configured"] = True
-        cfg.setdefault("proxy", {})["enabled"] = self.combo_proxy.currentText() == "enabled"
-        cfg["proxy"]["url"] = self.input_proxy.text().strip()
+        cfg.setdefault("proxy", {})["enabled"] = proxy_enabled
+        cfg["proxy"]["url"] = proxy_url
         cfg["proxy"]["use_env"] = True
 
         calc = cfg.setdefault("calculation", {})

@@ -10,8 +10,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from prl_profit_float.api import DataSnapshot, parse_safetrade_page
-from prl_profit_float.config import DEFAULT_CONFIG
+from prl_profit_float.api import ApiError, DataSnapshot, fetch_snapshot, normalize_http_url, parse_safetrade_page
+from prl_profit_float.config import DEFAULT_CONFIG, miner_address_error
 from prl_profit_float.model import compute_estimate, extract_market_price, fit_hashrate_hps, parse_hashrate, today_observed_prl
 
 
@@ -78,6 +78,25 @@ class ModelTest(unittest.TestCase):
 
     def test_parse_safetrade_page_embedded_price(self) -> None:
         self.assertAlmostEqual(parse_safetrade_page('window.__DATA__={"last":"0.6200"}')["price_usd"], 0.62)
+
+    def test_default_proxy_is_disabled(self) -> None:
+        self.assertFalse(DEFAULT_CONFIG["proxy"]["enabled"])
+        self.assertEqual(DEFAULT_CONFIG["proxy"]["url"], "")
+
+    def test_miner_address_validation(self) -> None:
+        self.assertIsNone(miner_address_error(DEFAULT_CONFIG["miner_address"]))
+        self.assertIsNotNone(miner_address_error(""))
+        self.assertIsNotNone(miner_address_error("https://example.com/wallet"))
+
+    def test_rejects_non_http_urls(self) -> None:
+        with self.assertRaises(ApiError):
+            normalize_http_url("file:///C:/Users/example/config.json")
+
+    def test_fetch_snapshot_reports_bad_url_as_error(self) -> None:
+        config = {**DEFAULT_CONFIG, "chain_summary_url": "file:///C:/Users/example/config.json"}
+        snapshot = fetch_snapshot(config, sources=["chain"])
+        self.assertEqual(snapshot.chain, None)
+        self.assertTrue(any("unsupported URL" in error for error in snapshot.errors))
 
 
 if __name__ == "__main__":

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
+
+MINER_ADDRESS_RE = re.compile(r"^prl1[0-9a-z]{20,120}$")
 
 if getattr(sys, "frozen", False):
     PROJECT_ROOT = Path(sys.executable).resolve().parent
@@ -227,9 +230,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "hashrate_info_url": "https://hashrate.no/coins/PRL/",
     "repository_url": "https://github.com/stlin256/prl-today",
     "proxy": {
-        "enabled": True,
+        "enabled": False,
         "use_env": True,
-        "url": "http://127.0.0.1:7897",
+        "url": "",
     },
     "calculation": {
         "fee_mode": "auto",
@@ -314,6 +317,15 @@ def save_config(config: dict[str, Any], path: Path = CONFIG_PATH) -> None:
     with path.open("w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
         f.write("\n")
+
+
+def miner_address_error(value: Any) -> str | None:
+    address = str(value or "").strip()
+    if not address:
+        return "Wallet is required"
+    if not MINER_ADDRESS_RE.fullmatch(address):
+        return "Wallet must be a lowercase PRL address starting with prl1"
+    return None
 
 
 def selected_pool(config: dict[str, Any]) -> dict[str, Any]:

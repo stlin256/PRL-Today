@@ -207,9 +207,9 @@
   "hashrate_info_url": "https://hashrate.no/coins/PRL/",
   "repository_url": "https://github.com/stlin256/prl-today",
   "proxy": {
-    "enabled": true,
+    "enabled": false,
     "use_env": true,
-    "url": "http://127.0.0.1:7897"
+    "url": ""
   },
   "calculation": {
     "fee_mode": "auto",
