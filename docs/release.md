@@ -21,7 +21,7 @@ Expected local outputs:
 The release workflow runs on:
 
 - `windows-latest` for Windows x64.
-- `macos-13` for macOS x64.
+- `macos-15-intel` for macOS x64.
 - `macos-14` for macOS arm64.
 - `ubuntu-latest` for Linux x64.
 
