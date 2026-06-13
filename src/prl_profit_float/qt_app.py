@@ -24,6 +24,7 @@ try:
         QLabel,
         QLineEdit,
         QMenu,
+        QMessageBox,
         QProgressBar,
         QPushButton,
         QScrollArea,
@@ -50,6 +51,7 @@ except ImportError:
         QLabel,
         QLineEdit,
         QMenu,
+        QMessageBox,
         QProgressBar,
         QPushButton,
         QScrollArea,
@@ -76,6 +78,7 @@ from .config import (
     save_config,
 )
 from .model import ProfitEstimate, SmoothValue, compute_estimate, seconds_today
+from .startup import StartupError, is_startup_enabled, set_startup_enabled, startup_supported
 
 
 FONT_UI = "'Urbanist', 'Inter', 'Segoe UI'"
@@ -98,6 +101,18 @@ TRUSTED_REPOSITORY_HOSTS = {"github.com", "www.github.com"}
 DPI_BASE = 96.0
 MIN_UI_SCALE = 0.85
 MAX_UI_SCALE = 1.8
+UI_SCALE_OPTIONS = ["auto", "85%", "100%", "115%", "125%", "150%", "175%", "180%"]
+STARTUP_SYNC_TIMEOUT_MS = 20_000
+PROXY_PROMPT_ERROR_PARTS = (
+    "timeout",
+    "timed out",
+    "connection",
+    "connect",
+    "network",
+    "proxy",
+    "ssl",
+    "max retries",
+)
 
 if QT_API == "PyQt6":
     FRAMELESS_FLAGS = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
@@ -216,6 +231,38 @@ def screen_ui_scale(screen: Any | None = None) -> float:
     if not math.isfinite(dpi) or dpi <= 0:
         return 1.0
     return bounded_ui_scale(max(dpi / DPI_BASE, 1.0), default=1.0)
+
+
+def parse_ui_scale_setting(value: Any) -> float | None:
+    text = str(value or "auto").strip().lower()
+    if text in {"", "auto", "system"}:
+        return None
+    if text.endswith("%"):
+        text = text[:-1].strip()
+        try:
+            return bounded_ui_scale(float(text) / 100.0)
+        except ValueError:
+            return None
+    try:
+        return bounded_ui_scale(float(text))
+    except ValueError:
+        return None
+
+
+def ui_scale_setting_label(value: Any) -> str:
+    scale = parse_ui_scale_setting(value)
+    if scale is None:
+        return "auto"
+    return f"{round(scale * 100)}%"
+
+
+def configured_ui_scale(config: dict[str, Any], screen: Any | None = None) -> float:
+    if os.environ.get("PRL_TODAY_UI_SCALE"):
+        return screen_ui_scale(screen)
+    scale = parse_ui_scale_setting((config.get("display") or {}).get("ui_scale", "auto"))
+    if scale is not None:
+        return scale
+    return screen_ui_scale(screen)
 
 
 def qt_application_attribute(name: str) -> Any:
@@ -415,8 +462,8 @@ class ProfitWorker(QObject):
 class PRLTodayWindow(QWidget):
     def __init__(self, config: dict[str, Any]):
         super().__init__()
-        self.ui_scale = screen_ui_scale()
         self.config = copy.deepcopy(config)
+        self.ui_scale = configured_ui_scale(self.config)
         self.display_level = clean_level((self.config.get("display") or {}).get("level"))
         self.currency = display_currency(self.config)
         self.bg_opacity = self.opacity_to_int((self.config.get("window") or {}).get("alpha", 0.96))
@@ -436,14 +483,21 @@ class PRLTodayWindow(QWidget):
         self._monitor_geometry: tuple[int, int, int, int] | None = None
         self._header_target_x: int | None = None
         self._progress_loading: bool | None = None
+        self._proxy_prompted = False
+        self._startup_fetch_finished = False
         self.old_pos = QPoint()
         self.geometry_save_timer = QTimer(self)
         self.geometry_save_timer.setSingleShot(True)
         self.geometry_save_timer.timeout.connect(self.persist_geometry)
+        self.proxy_prompt_timer = QTimer(self)
+        self.proxy_prompt_timer.setSingleShot(True)
+        self.proxy_prompt_timer.timeout.connect(self.on_startup_sync_timeout)
 
         self.init_ui()
         self.init_tray()
         self.start_worker()
+        if not self.proxy_enabled():
+            self.proxy_prompt_timer.start(STARTUP_SYNC_TIMEOUT_MS)
         self.tick_timer = QTimer(self)
         self.tick_timer.timeout.connect(self.update_tick)
         self.tick_timer.start(refresh_seconds(self.config, "ui_tick_seconds") * 1000)
@@ -629,6 +683,12 @@ class PRLTodayWindow(QWidget):
         self.combo_currency = QComboBox()
         self.combo_currency.addItems(["auto", "usd", "cny"])
         self.combo_currency.setCurrentText(str((self.config.get("display") or {}).get("currency", "auto")).lower())
+        self.combo_ui_scale = QComboBox()
+        scale_label = ui_scale_setting_label((self.config.get("display") or {}).get("ui_scale", "auto"))
+        self.combo_ui_scale.addItems(UI_SCALE_OPTIONS)
+        if scale_label not in UI_SCALE_OPTIONS:
+            self.combo_ui_scale.addItem(scale_label)
+        self.combo_ui_scale.setCurrentText(scale_label)
         self.combo_hashrate = QComboBox()
         self.combo_hashrate.addItems(["fit", "miner_1h", "miner_24h", "worker_live"])
         self.combo_hashrate.setCurrentText(str((self.config.get("calculation") or {}).get("hashrate_mode", "fit")))
@@ -664,6 +724,13 @@ class PRLTodayWindow(QWidget):
         self.combo_proxy.addItems(["enabled", "disabled"])
         self.combo_proxy.setCurrentText("enabled" if proxy.get("enabled", True) else "disabled")
         self.input_proxy = QLineEdit(str(proxy.get("url", "")))
+        self.combo_startup = QComboBox()
+        self.combo_startup.addItems(["enabled", "disabled"])
+        startup_enabled = bool((self.config.get("startup") or {}).get("enabled", False))
+        if startup_supported():
+            startup_enabled = is_startup_enabled()
+        self.combo_startup.setCurrentText("enabled" if startup_enabled else "disabled")
+        self.combo_startup.setEnabled(startup_supported())
 
         self.input_miner_refresh = QLineEdit(str(refresh_seconds(self.config, "miner_seconds")))
         self.input_pool_refresh = QLineEdit(str(refresh_seconds(self.config, "pool_seconds")))
@@ -690,6 +757,7 @@ class PRLTodayWindow(QWidget):
         form.addRow(self.form_label("Pool"), self.combo_pool)
         form.addRow(self.form_label("Level"), self.combo_level)
         form.addRow(self.form_label("Currency"), self.combo_currency)
+        form.addRow(self.form_label("Scale"), self.combo_ui_scale)
         form.addRow(self.form_label("Hashrate"), self.combo_hashrate)
         form.addRow(self.form_label("Miner soft"), self.combo_mining_software)
         form.addRow(self.form_label("Pool fee"), self.row_widget(self.combo_fee_mode, self.input_fee))
@@ -698,6 +766,7 @@ class PRLTodayWindow(QWidget):
         form.addRow(self.form_label("PRL/USD"), self.row_widget(self.combo_price_mode, self.input_price))
         form.addRow(self.form_label("USD/CNY"), self.row_widget(self.combo_fx_mode, self.input_fx))
         form.addRow(self.form_label("Proxy"), self.row_widget(self.combo_proxy, self.input_proxy))
+        form.addRow(self.form_label("Startup"), self.combo_startup)
         form.addRow(self.form_label("Refresh"), self.row_widget(self.input_miner_refresh, self.input_pool_refresh, self.input_market_refresh))
         form.addRow(self.form_label("Chain/FX"), self.row_widget(self.input_chain_refresh, self.input_fx_refresh))
         form.addRow(self.form_label("Opacity"), self.slider_opacity)
@@ -776,6 +845,7 @@ class PRLTodayWindow(QWidget):
             self.combo_pool,
             self.combo_level,
             self.combo_currency,
+            self.combo_ui_scale,
             self.combo_hashrate,
             self.combo_mining_software,
             self.combo_fee_mode,
@@ -784,6 +854,7 @@ class PRLTodayWindow(QWidget):
             self.combo_price_mode,
             self.combo_fx_mode,
             self.combo_proxy,
+            self.combo_startup,
         ):
             widget.setMinimumHeight(self.dp(22))
             widget.setStyleSheet(combo_style)
@@ -1088,6 +1159,36 @@ class PRLTodayWindow(QWidget):
         self.config_msg.setStyleSheet(f"font-size: {self.dp(9)}px; color: {ACCENT}; font-weight: 700;")
         self.config_msg.setText("Set wallet, pool, miner and price source, then save.")
 
+    def proxy_enabled(self) -> bool:
+        return bool((self.config.get("proxy") or {}).get("enabled", False))
+
+    def on_startup_sync_timeout(self) -> None:
+        if self._startup_fetch_finished or self.last_estimate is not None or not self.loading:
+            return
+        self.prompt_proxy_setup("Startup sync is taking longer than expected. Set a proxy now?")
+
+    def maybe_prompt_proxy_for_errors(self, errors: list[str]) -> None:
+        if self._startup_fetch_finished or not errors:
+            return
+        error_text = " ".join(errors).lower()
+        if any(part in error_text for part in PROXY_PROMPT_ERROR_PARTS):
+            self.prompt_proxy_setup("Startup sync hit a network error. Set a proxy now?")
+
+    def prompt_proxy_setup(self, message: str) -> None:
+        if self._proxy_prompted or self.proxy_enabled():
+            return
+        self._proxy_prompted = True
+        buttons = getattr(QMessageBox, "StandardButton", QMessageBox)
+        answer = QMessageBox.question(self, "PRL-Today Proxy", message, buttons.Yes | buttons.No, buttons.Yes)
+        if answer != buttons.Yes:
+            return
+        self.show_config()
+        self.combo_proxy.setCurrentText("enabled")
+        self.input_proxy.setFocus()
+        self.input_proxy.selectAll()
+        self.config_msg.setStyleSheet(f"font-size: {self.dp(9)}px; color: {ACCENT}; font-weight: 700;")
+        self.config_msg.setText("Enter an HTTP(S) proxy URL, then save.")
+
     def show_window(self) -> None:
         self.showNormal()
         self.activateWindow()
@@ -1107,6 +1208,13 @@ class PRLTodayWindow(QWidget):
             except ApiError:
                 self.config_msg.setText("Proxy must be an http(s) URL")
                 return
+        startup_enabled = startup_supported() and self.combo_startup.currentText() == "enabled"
+        if startup_supported():
+            try:
+                set_startup_enabled(startup_enabled)
+            except StartupError as exc:
+                self.config_msg.setText(str(exc))
+                return
 
         cfg = copy.deepcopy(self.config)
         cfg["miner_address"] = miner
@@ -1115,10 +1223,12 @@ class PRLTodayWindow(QWidget):
         cfg["selected_market_source"] = self.combo_market_source.currentText()
         cfg.setdefault("display", {})["level"] = self.combo_level.currentText()
         cfg["display"]["currency"] = self.combo_currency.currentText()
+        cfg["display"]["ui_scale"] = self.combo_ui_scale.currentText()
         cfg["display"]["configured"] = True
         cfg.setdefault("proxy", {})["enabled"] = proxy_enabled
         cfg["proxy"]["url"] = proxy_url
         cfg["proxy"]["use_env"] = True
+        cfg.setdefault("startup", {})["enabled"] = startup_enabled
 
         calc = cfg.setdefault("calculation", {})
         calc["hashrate_mode"] = self.combo_hashrate.currentText()
@@ -1146,16 +1256,50 @@ class PRLTodayWindow(QWidget):
         save_config(cfg, CONFIG_PATH)
         self.config = cfg
         self._first_run = False
+        self.ui_scale = configured_ui_scale(cfg)
+        self.apply_runtime_scale()
         self.display_level = clean_level((cfg.get("display") or {}).get("level"))
         self.currency = display_currency(cfg)
         self.intervals = {source: refresh_seconds(cfg, f"{source}_seconds") for source in SOURCE_FIELDS}
         self.loading = True
         self.loading_sources = ["miner", "pool", "market"]
+        if self.proxy_enabled():
+            self.proxy_prompt_timer.stop()
         self.tick_timer.start(refresh_seconds(cfg, "ui_tick_seconds") * 1000)
         if self.worker:
             self.worker.update_config(copy.deepcopy(cfg))
         self.config_msg.setText("")
         self.toggle_config()
+
+    def apply_runtime_scale(self) -> None:
+        self.container_layout.setContentsMargins(self.dp(10), self.dp(6), self.dp(10), self.dp(6))
+        self.header.setFixedHeight(self.dp(24))
+        self.logo_label.setFixedSize(self.dp(42), self.dp(13))
+        self.load_logo()
+        self.title_label.setStyleSheet(
+            f"font-family: {FONT_UI}; font-size: {self.dp(10)}px; font-weight: 700; color: {PEARL};"
+        )
+        self.status_label.setStyleSheet(f"font-size: {self.dp(9)}px; color: {TEXT_MUTED}; font-weight: bold;")
+        self.status_label.setFixedHeight(self.dp(24))
+        self.btn_settings.setFixedSize(self.dp(18), self.dp(18))
+        self.btn_close.setFixedSize(self.dp(18), self.dp(18))
+        self.sizegrip.setFixedSize(self.dp(12), self.dp(12))
+        self.amount_label.scale = self.ui_scale
+        self.amount_label.setMinimumHeight(self.dp(30))
+        self.amount_label.render()
+        self.sub_label.setMinimumWidth(self.dp(180))
+        self.sub_label.setStyleSheet(
+            f"font-family: {FONT_MONO}; font-size: {self.dp(10)}px; color: {SHELL}; font-weight: 700; letter-spacing: 0px;"
+        )
+        for label in (self.left_metric, self.right_metric):
+            label.setStyleSheet(f"font-family: {FONT_UI}; font-size: {self.dp(10)}px; color: {SHELL};")
+        self.detail_label.setStyleSheet(f"font-family: {FONT_UI}; font-size: {self.dp(9)}px; color: {TEXT_MUTED}; line-height: 120%;")
+        self.repo_button.setFixedHeight(self.dp(24))
+        self.repo_button.setIconSize(QSize(self.dp(15), self.dp(15)))
+        self.configure_inputs()
+        self.update_style(self.underMouse())
+        self._progress_loading = None
+        self.update_progress_style(self.loading and self.last_estimate is None)
 
     def capture_geometry(self, cfg: dict[str, Any] | None = None) -> None:
         target = cfg if cfg is not None else self.config
@@ -1192,6 +1336,11 @@ class PRLTodayWindow(QWidget):
         estimate = data.get("estimate")
         if not isinstance(estimate, ProfitEstimate):
             return
+        first_startup_result = not self._startup_fetch_finished
+        if first_startup_result:
+            self.maybe_prompt_proxy_for_errors(list(estimate.errors))
+            self._startup_fetch_finished = True
+            self.proxy_prompt_timer.stop()
         self.loading = False
         self.update_progress_style(False)
         self.progress_bar.setRange(0, 86400)
@@ -1329,6 +1478,7 @@ class PRLTodayWindow(QWidget):
 
     def shutdown(self) -> None:
         self.geometry_save_timer.stop()
+        self.proxy_prompt_timer.stop()
         if hasattr(self, "tray_icon"):
             self.tray_icon.hide()
         if self.worker:

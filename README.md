@@ -18,6 +18,8 @@ It reads live miner, pool, market, network, and FX data, then displays a continu
 - Stable-width primary and secondary values to avoid layout jitter while numbers change.
 - Miner/pool/market refresh scheduler instead of one global polling interval.
 - Configurable display levels: `lite`, `standard`, and `detail`.
+- Configurable UI scale for high-DPI screens and smaller or larger floating-window minimum sizes.
+- User-level startup-on-login setting for Windows, macOS, and Linux.
 - Built-in PRL mining pool presets from Hashrate.no, including AlphaPool, Kryptex, Pearlhash, Luckypool, JETSKI, BaikalMine, akoya, Himpool, NushyPool, Mineprl, and HeroMiners.
 - Built-in PRL miner presets from Hashrate.no and current public miner docs:
   - AlphaMiner, pearl algorithm, 0.00% developer fee from the official v1.7.7+ release.
@@ -30,6 +32,7 @@ It reads live miner, pool, market, network, and FX data, then displays a continu
   - SafeTrade mirror endpoints.
   - SafeTrade exchange page fallback.
 - Optional proxy support.
+- Startup sync timeout prompt that can take you directly to proxy setup when network data is blocked.
 
 ## Download
 
@@ -121,8 +124,10 @@ The setup panel lets you configure:
 - Price source and manual price fallback.
 - USD/CNY source and manual FX fallback.
 - Proxy.
+- Startup on login.
 - Refresh intervals.
 - Display currency and detail level.
+- UI scale.
 
 ## Tests
 

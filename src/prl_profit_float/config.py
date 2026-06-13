@@ -234,6 +234,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "use_env": True,
         "url": "",
     },
+    "startup": {
+        "enabled": False,
+    },
     "calculation": {
         "fee_mode": "auto",
         "fee_override_percent": 3.0,
@@ -257,6 +260,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "display": {
         "level": "standard",
         "currency": "auto",
+        "ui_scale": "auto",
         "configured": False,
     },
     "window": {

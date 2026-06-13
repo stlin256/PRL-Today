@@ -211,6 +211,9 @@
     "use_env": true,
     "url": ""
   },
+  "startup": {
+    "enabled": false
+  },
   "calculation": {
     "fee_mode": "auto",
     "fee_override_percent": 3.0,
@@ -234,6 +237,7 @@
   "display": {
     "level": "standard",
     "currency": "auto",
+    "ui_scale": "auto",
     "configured": false
   },
   "window": {

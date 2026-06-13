@@ -16,7 +16,8 @@ if str(SRC) not in sys.path:
 from prl_profit_float.api import ApiError, DataSnapshot, HttpClient, fetch_snapshot, normalize_http_url, parse_safetrade_page
 from prl_profit_float.config import DEFAULT_CONFIG, miner_address_error
 from prl_profit_float.model import compute_estimate, extract_market_price, fit_hashrate_hps, parse_hashrate, today_observed_prl
-from prl_profit_float.qt_app import ProfitWorker, screen_ui_scale
+from prl_profit_float.qt_app import ProfitWorker, configured_ui_scale, parse_ui_scale_setting, screen_ui_scale
+from prl_profit_float.startup import LaunchCommand, linux_desktop_content, startup_file_content, windows_batch_content
 
 
 class BrokenClient:
@@ -99,6 +100,8 @@ class ModelTest(unittest.TestCase):
     def test_default_proxy_is_disabled(self) -> None:
         self.assertFalse(DEFAULT_CONFIG["proxy"]["enabled"])
         self.assertEqual(DEFAULT_CONFIG["proxy"]["url"], "")
+        self.assertFalse(DEFAULT_CONFIG["startup"]["enabled"])
+        self.assertEqual(DEFAULT_CONFIG["display"]["ui_scale"], "auto")
 
     def test_miner_address_validation(self) -> None:
         self.assertIsNone(miner_address_error(DEFAULT_CONFIG["miner_address"]))
@@ -137,6 +140,30 @@ class ModelTest(unittest.TestCase):
     def test_screen_ui_scale_allows_environment_override(self) -> None:
         with patch.dict(os.environ, {"PRL_TODAY_UI_SCALE": "2.5"}):
             self.assertEqual(screen_ui_scale(FakeScreen(96)), 1.8)
+
+    def test_configured_ui_scale_accepts_manual_percent(self) -> None:
+        config = {"display": {"ui_scale": "125%"}}
+        self.assertEqual(configured_ui_scale(config, FakeScreen(96)), 1.25)
+        self.assertEqual(parse_ui_scale_setting("250%"), 1.8)
+        self.assertIsNone(parse_ui_scale_setting("auto"))
+
+    def test_configured_ui_scale_auto_uses_screen_dpi(self) -> None:
+        config = {"display": {"ui_scale": "auto"}}
+        self.assertAlmostEqual(configured_ui_scale(config, FakeScreen(144)), 1.5)
+
+    def test_startup_files_launch_project(self) -> None:
+        command = LaunchCommand(
+            executable=Path("C:/Python311/python.exe"),
+            args=("F:/project/PRL-Today/run.py",),
+            cwd=Path("F:/project/PRL-Today"),
+        )
+        batch = windows_batch_content(command)
+        self.assertIn("run.py", batch)
+        self.assertIn("start", batch)
+        desktop = linux_desktop_content(command)
+        self.assertIn("Exec=", desktop)
+        self.assertIn("run.py", desktop)
+        self.assertIn("run.py", startup_file_content(command, "darwin"))
 
 
 if __name__ == "__main__":
