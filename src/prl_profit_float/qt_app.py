@@ -95,6 +95,9 @@ INPUT_BORDER = "#5C564E"
 LOADING_ACCENT = "#E4B7FF"
 REPOSITORY_FALLBACK_URL = "https://github.com/stlin256/prl-today"
 TRUSTED_REPOSITORY_HOSTS = {"github.com", "www.github.com"}
+DPI_BASE = 96.0
+MIN_UI_SCALE = 0.85
+MAX_UI_SCALE = 1.8
 
 if QT_API == "PyQt6":
     FRAMELESS_FLAGS = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
@@ -181,17 +184,79 @@ def display_currency(config: dict[str, Any]) -> str:
     return "cny" if system_prefers_cny() else "usd"
 
 
+def scaled_int(value: float, scale: float, minimum: int = 1) -> int:
+    return max(minimum, int(round(value * scale)))
+
+
+def bounded_ui_scale(value: Any, default: float = 1.0) -> float:
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        parsed = default
+    if not math.isfinite(parsed):
+        parsed = default
+    return min(max(parsed, MIN_UI_SCALE), MAX_UI_SCALE)
+
+
+def screen_ui_scale(screen: Any | None = None) -> float:
+    override = os.environ.get("PRL_TODAY_UI_SCALE")
+    if override:
+        return bounded_ui_scale(override)
+    if screen is None:
+        try:
+            screen = QApplication.primaryScreen()
+        except RuntimeError:
+            screen = None
+    if screen is None:
+        return 1.0
+    try:
+        dpi = float(screen.logicalDotsPerInch())
+    except (TypeError, ValueError, AttributeError):
+        return 1.0
+    if not math.isfinite(dpi) or dpi <= 0:
+        return 1.0
+    return bounded_ui_scale(max(dpi / DPI_BASE, 1.0), default=1.0)
+
+
+def qt_application_attribute(name: str) -> Any:
+    container = getattr(Qt, "ApplicationAttribute", None)
+    return getattr(container, name, None) or getattr(Qt, name, None)
+
+
+def configure_high_dpi() -> None:
+    if QT_API == "PyQt5":
+        os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+    for name in ("AA_EnableHighDpiScaling", "AA_UseHighDpiPixmaps"):
+        attribute = qt_application_attribute(name)
+        if attribute is not None:
+            QApplication.setAttribute(attribute, True)
+    policy_container = getattr(Qt, "HighDpiScaleFactorRoundingPolicy", None)
+    policy = getattr(policy_container, "PassThrough", None)
+    if policy is not None and hasattr(QApplication, "setHighDpiScaleFactorRoundingPolicy"):
+        QApplication.setHighDpiScaleFactorRoundingPolicy(policy)
+
+
 class SlotNumber(QWidget):
-    def __init__(self) -> None:
+    def __init__(self, scale: float = 1.0) -> None:
         super().__init__()
+        self.scale = scale
         self.labels: list[QLabel] = []
         self.current = ""
         self.target = ""
         self.phase = 0
-        self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
-        self.setMinimumHeight(30)
+        self.digit_layout = QHBoxLayout(self)
+        self.digit_layout.setContentsMargins(0, 0, 0, 0)
+        self.digit_layout.setSpacing(0)
+        self.setMinimumHeight(self.dp(30))
+
+    def dp(self, value: float, minimum: int = 1) -> int:
+        return scaled_int(value, self.scale, minimum)
+
+    def digit_style(self) -> str:
+        return (
+            f"font-family: {FONT_MONO}; font-size: {self.dp(23)}px; font-weight: 800; color: {PEARL}; "
+            "background: transparent; letter-spacing: 0px;"
+        )
 
     def set_target(self, value: str) -> None:
         if value == self.target:
@@ -208,16 +273,13 @@ class SlotNumber(QWidget):
         while len(self.labels) < width:
             label = QLabel(" ")
             label.setAlignment(ALIGN_CENTER)
-            label.setMinimumWidth(13)
-            label.setStyleSheet(
-                f"font-family: {FONT_MONO}; font-size: 23px; font-weight: 800; color: {PEARL}; "
-                f"background: transparent; letter-spacing: 0px;"
-            )
+            label.setMinimumWidth(self.dp(13))
+            label.setStyleSheet(self.digit_style())
             self.labels.append(label)
-            self.layout.addWidget(label)
+            self.digit_layout.addWidget(label)
         while len(self.labels) > width:
             label = self.labels.pop()
-            self.layout.removeWidget(label)
+            self.digit_layout.removeWidget(label)
             label.deleteLater()
 
     def step(self) -> None:
@@ -251,10 +313,7 @@ class SlotNumber(QWidget):
         for idx, char in enumerate(text):
             label = self.labels[idx]
             label.setText(char)
-            label.setStyleSheet(
-                f"font-family: {FONT_MONO}; font-size: 23px; font-weight: 800; color: {PEARL}; "
-                f"background: transparent; letter-spacing: 0px;"
-            )
+            label.setStyleSheet(self.digit_style())
 
 
 class ProfitWorker(QObject):
@@ -356,6 +415,7 @@ class ProfitWorker(QObject):
 class PRLTodayWindow(QWidget):
     def __init__(self, config: dict[str, Any]):
         super().__init__()
+        self.ui_scale = screen_ui_scale()
         self.config = copy.deepcopy(config)
         self.display_level = clean_level((self.config.get("display") or {}).get("level"))
         self.currency = display_currency(self.config)
@@ -374,6 +434,8 @@ class PRLTodayWindow(QWidget):
         self._dragging = False
         self._suppress_geometry_persist = True
         self._monitor_geometry: tuple[int, int, int, int] | None = None
+        self._header_target_x: int | None = None
+        self._progress_loading: bool | None = None
         self.old_pos = QPoint()
         self.geometry_save_timer = QTimer(self)
         self.geometry_save_timer.setSingleShot(True)
@@ -393,6 +455,9 @@ class PRLTodayWindow(QWidget):
         if self._first_run:
             QTimer.singleShot(350, self.show_first_run_config)
 
+    def dp(self, value: float, minimum: int = 1) -> int:
+        return scaled_int(value, self.ui_scale, minimum)
+
     def init_ui(self) -> None:
         self.setWindowTitle("PRL-Today")
         self.setWindowIcon(QIcon(str(asset_path("assets", "app_icon.png"))))
@@ -407,45 +472,45 @@ class PRLTodayWindow(QWidget):
         self.main_layout.addWidget(self.container)
 
         self.container_layout = QVBoxLayout(self.container)
-        self.container_layout.setContentsMargins(10, 6, 10, 6)
+        self.container_layout.setContentsMargins(self.dp(10), self.dp(6), self.dp(10), self.dp(6))
         self.container_layout.setSpacing(0)
 
         self.header = QWidget()
-        self.header.setFixedHeight(24)
+        self.header.setFixedHeight(self.dp(24))
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(2)
+        header_layout.setSpacing(self.dp(2))
         self.logo_label = QLabel()
         self.logo_label.setObjectName("LogoLabel")
-        self.logo_label.setFixedSize(40, 13)
+        self.logo_label.setFixedSize(self.dp(40), self.dp(13))
         self.load_logo()
         header_layout.addWidget(self.logo_label)
         self.title_label = QLabel("Today")
         self.title_label.setStyleSheet(
-            f"font-family: {FONT_UI}; font-size: 10px; font-weight: 700; color: {PEARL};"
+            f"font-family: {FONT_UI}; font-size: {self.dp(10)}px; font-weight: 700; color: {PEARL};"
         )
         header_layout.addWidget(self.title_label)
         self.right_container = QWidget()
         header_layout.addWidget(self.right_container, 1)
 
         self.status_label = QLabel("starting", self.right_container)
-        self.status_label.setStyleSheet(f"font-size: 9px; color: {TEXT_MUTED}; font-weight: bold;")
-        self.status_label.setFixedHeight(24)
+        self.status_label.setStyleSheet(f"font-size: {self.dp(9)}px; color: {TEXT_MUTED}; font-weight: bold;")
+        self.status_label.setFixedHeight(self.dp(24))
 
         self.btn_settings = QPushButton("...", self.right_container)
         self.btn_settings.setObjectName("HeaderBtn")
-        self.btn_settings.setFixedSize(18, 18)
+        self.btn_settings.setFixedSize(self.dp(18), self.dp(18))
         self.btn_settings.clicked.connect(self.toggle_config)
         self.btn_settings.setVisible(False)
 
         self.btn_close = QPushButton("x", self.right_container)
         self.btn_close.setObjectName("HeaderBtn")
-        self.btn_close.setFixedSize(18, 18)
+        self.btn_close.setFixedSize(self.dp(18), self.dp(18))
         self.btn_close.clicked.connect(self.hide)
         self.btn_close.setVisible(False)
 
         self.header_anim = QPropertyAnimation(self.status_label, b"pos")
-        self.header_anim.setDuration(250)
+        self.header_anim.setDuration(180)
         self.header_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self.container_layout.addWidget(self.header)
 
@@ -457,7 +522,7 @@ class PRLTodayWindow(QWidget):
         self.container_layout.addWidget(self.view_stack)
 
         self.sizegrip = QSizeGrip(self)
-        self.sizegrip.setFixedSize(12, 12)
+        self.sizegrip.setFixedSize(self.dp(12), self.dp(12))
         self.sizegrip.setVisible(False)
         self.update_style(False)
         self.apply_display_level(force_resize=True)
@@ -466,7 +531,7 @@ class PRLTodayWindow(QWidget):
         pixmap = QPixmap(str(asset_path("assets", "prl_logo.png")))
         if pixmap.isNull():
             self.logo_label.setText("PRL")
-            self.logo_label.setStyleSheet(f"font-family: {FONT_UI}; color: {PEARL}; font-size: 10px; font-weight: 800;")
+            self.logo_label.setStyleSheet(f"font-family: {FONT_UI}; color: {PEARL}; font-size: {self.dp(10)}px; font-weight: 800;")
             return
         self.logo_label.setPixmap(pixmap.scaled(self.logo_label.size(), KEEP_ASPECT, SMOOTH_TRANSFORM))
 
@@ -474,20 +539,20 @@ class PRLTodayWindow(QWidget):
         view = QWidget()
         layout = QVBoxLayout(view)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(self.dp(2))
 
-        self.amount_label = SlotNumber()
+        self.amount_label = SlotNumber(self.ui_scale)
         self.amount_label.set_target(self.loading_text())
         self.amount_label.step()
 
         self.sub_label = QLabel("")
-        self.sub_label.setMinimumWidth(180)
+        self.sub_label.setMinimumWidth(self.dp(180))
         self.sub_label.setStyleSheet(
-            f"font-family: {FONT_MONO}; font-size: 10px; color: {SHELL}; font-weight: 700; letter-spacing: 0px;"
+            f"font-family: {FONT_MONO}; font-size: {self.dp(10)}px; color: {SHELL}; font-weight: 700; letter-spacing: 0px;"
         )
 
         self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedHeight(2)
+        self.progress_bar.setFixedHeight(self.dp(2))
         self.progress_bar.setRange(0, 86400)
         self.progress_bar.setTextVisible(False)
         self.update_progress_style()
@@ -495,18 +560,18 @@ class PRLTodayWindow(QWidget):
         self.metric_row = QWidget()
         metric_layout = QHBoxLayout(self.metric_row)
         metric_layout.setContentsMargins(0, 0, 0, 0)
-        metric_layout.setSpacing(8)
+        metric_layout.setSpacing(self.dp(8))
         self.left_metric = QLabel("hash --")
         self.right_metric = QLabel("price --")
         for label in (self.left_metric, self.right_metric):
-            label.setStyleSheet(f"font-family: {FONT_UI}; font-size: 10px; color: {SHELL};")
+            label.setStyleSheet(f"font-family: {FONT_UI}; font-size: {self.dp(10)}px; color: {SHELL};")
         metric_layout.addWidget(self.left_metric)
         metric_layout.addStretch()
         metric_layout.addWidget(self.right_metric)
 
         self.detail_label = QLabel("")
         self.detail_label.setWordWrap(True)
-        self.detail_label.setStyleSheet(f"font-family: {FONT_UI}; font-size: 9px; color: {TEXT_MUTED}; line-height: 120%;")
+        self.detail_label.setStyleSheet(f"font-family: {FONT_UI}; font-size: {self.dp(9)}px; color: {TEXT_MUTED}; line-height: 120%;")
 
         layout.addWidget(self.amount_label)
         layout.addWidget(self.sub_label)
@@ -519,8 +584,8 @@ class PRLTodayWindow(QWidget):
         view = QWidget()
         view.setObjectName("ConfigView")
         layout = QVBoxLayout(view)
-        layout.setContentsMargins(0, 4, 0, 4)
-        layout.setSpacing(5)
+        layout.setContentsMargins(0, self.dp(4), 0, self.dp(4))
+        layout.setSpacing(self.dp(5))
 
         scroll = QScrollArea()
         scroll.setObjectName("ConfigScroll")
@@ -530,8 +595,8 @@ class PRLTodayWindow(QWidget):
         form_host = QWidget()
         form_host.setObjectName("ConfigForm")
         form = QFormLayout(form_host)
-        form.setContentsMargins(0, 0, 4, 0)
-        form.setSpacing(5)
+        form.setContentsMargins(0, 0, self.dp(4), 0)
+        form.setSpacing(self.dp(5))
         form.setLabelAlignment(ALIGN_LEFT)
 
         self.input_miner = QLineEdit(str(self.config.get("miner_address", "")))
@@ -594,9 +659,9 @@ class PRLTodayWindow(QWidget):
         self.repo_url = str(self.config.get("repository_url") or "https://github.com/stlin256/prl-today")
         self.repo_button = QPushButton("stlin256/PRL-Today")
         self.repo_button.setObjectName("RepoButton")
-        self.repo_button.setFixedHeight(24)
+        self.repo_button.setFixedHeight(self.dp(24))
         self.repo_button.setIcon(QIcon(str(asset_path("assets", "github_mark.png"))))
-        self.repo_button.setIconSize(QSize(15, 15))
+        self.repo_button.setIconSize(QSize(self.dp(15), self.dp(15)))
         self.repo_button.clicked.connect(self.open_repository)
 
         self.configure_inputs()
@@ -620,7 +685,7 @@ class PRLTodayWindow(QWidget):
         scroll.setWidget(form_host)
 
         self.config_msg = QLabel("")
-        self.config_msg.setStyleSheet("font-size: 9px; color: #FF6B6B; font-weight: bold;")
+        self.config_msg.setStyleSheet(f"font-size: {self.dp(9)}px; color: #FF6B6B; font-weight: bold;")
         save_button = QPushButton("Save && Apply")
         save_button.setObjectName("SaveBtn")
         save_button.clicked.connect(self.save_config_action)
@@ -633,15 +698,15 @@ class PRLTodayWindow(QWidget):
     def form_label(self, text: str) -> QLabel:
         label = QLabel(text)
         label.setObjectName("FormLabel")
-        label.setMinimumWidth(66)
-        label.setStyleSheet(f"color: {SHELL}; font-family: {FONT_UI}; font-size: 9px; font-weight: 700;")
+        label.setMinimumWidth(self.dp(66))
+        label.setStyleSheet(f"color: {SHELL}; font-family: {FONT_UI}; font-size: {self.dp(9)}px; font-weight: 700;")
         return label
 
     def row_widget(self, *widgets: QWidget) -> QWidget:
         host = QWidget()
         layout = QHBoxLayout(host)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(self.dp(4))
         for widget in widgets:
             layout.addWidget(widget)
         return host
@@ -663,7 +728,7 @@ class PRLTodayWindow(QWidget):
     def configure_inputs(self) -> None:
         input_style = (
             f"background: {INPUT_BG}; color: {PEARL}; border: 1px solid {INPUT_BORDER}; "
-            f"border-radius: 4px; padding: 3px 6px; font-family: {FONT_UI}; font-size: 9px; "
+            f"border-radius: {self.dp(4)}px; padding: {self.dp(3)}px {self.dp(6)}px; font-family: {FONT_UI}; font-size: {self.dp(9)}px; "
             f"selection-background-color: {ACCENT}; selection-color: #111111;"
         )
         combo_style = (
@@ -685,7 +750,7 @@ class PRLTodayWindow(QWidget):
             self.input_fx_refresh,
         ]
         for widget in text_inputs:
-            widget.setMinimumHeight(22)
+            widget.setMinimumHeight(self.dp(22))
             widget.setStyleSheet(input_style)
         for widget in (
             self.combo_pool,
@@ -700,10 +765,10 @@ class PRLTodayWindow(QWidget):
             self.combo_fx_mode,
             self.combo_proxy,
         ):
-            widget.setMinimumHeight(22)
+            widget.setMinimumHeight(self.dp(22))
             widget.setStyleSheet(combo_style)
         for widget in (self.input_miner_refresh, self.input_pool_refresh, self.input_market_refresh, self.input_chain_refresh, self.input_fx_refresh):
-            widget.setMaximumWidth(54)
+            widget.setMaximumWidth(self.dp(54))
 
     def sync_tool_fee_from_software(self) -> None:
         if not hasattr(self, "combo_tool_fee_mode") or not hasattr(self, "input_tool_fee"):
@@ -746,8 +811,8 @@ class PRLTodayWindow(QWidget):
             f"""
             #MainContainer {{
                 background-color: rgba(17, 17, 17, {self.bg_opacity});
-                border: 2px solid {border};
-                border-radius: 12px;
+                border: {self.dp(2)}px solid {border};
+                border-radius: {self.dp(12)}px;
             }}
             #LogoLabel {{
                 background-color: transparent;
@@ -757,7 +822,7 @@ class PRLTodayWindow(QWidget):
                 color: {PEARL};
                 border: none;
                 font-family: {FONT_UI};
-                font-size: 13px;
+                font-size: {self.dp(13)}px;
                 font-weight: 700;
             }}
             QPushButton#HeaderBtn:hover {{ color: {ACCENT_LIGHT}; }}
@@ -765,8 +830,8 @@ class PRLTodayWindow(QWidget):
                 background: {ACCENT};
                 color: #111111;
                 border: none;
-                border-radius: 4px;
-                min-height: 24px;
+                border-radius: {self.dp(4)}px;
+                min-height: {self.dp(24)}px;
                 font-family: {FONT_UI};
                 font-weight: 800;
             }}
@@ -777,10 +842,10 @@ class PRLTodayWindow(QWidget):
                 background: {INPUT_BG};
                 color: {PEARL};
                 border: 1px solid {INPUT_BORDER};
-                border-radius: 4px;
-                padding: 3px 6px;
+                border-radius: {self.dp(4)}px;
+                padding: {self.dp(3)}px {self.dp(6)}px;
                 font-family: {FONT_UI};
-                font-size: 9px;
+                font-size: {self.dp(9)}px;
                 selection-background-color: {ACCENT};
                 selection-color: #111111;
             }}
@@ -802,13 +867,13 @@ class PRLTodayWindow(QWidget):
             QLabel#FormLabel {{
                 color: {SHELL};
                 font-family: {FONT_UI};
-                font-size: 9px;
+                font-size: {self.dp(9)}px;
                 font-weight: 700;
             }}
             QLabel#RepoLink {{
                 color: {ACCENT};
                 font-family: {FONT_UI};
-                font-size: 9px;
+                font-size: {self.dp(9)}px;
             }}
             QLabel#RepoLink a {{
                 color: {ACCENT};
@@ -817,12 +882,12 @@ class PRLTodayWindow(QWidget):
             QPushButton#RepoButton {{
                 background: transparent;
                 border: 1px solid {INPUT_BORDER};
-                border-radius: 4px;
+                border-radius: {self.dp(4)}px;
                 color: {PEARL};
                 font-family: {FONT_UI};
-                font-size: 10px;
+                font-size: {self.dp(10)}px;
                 font-weight: 700;
-                padding: 2px 7px;
+                padding: {self.dp(2)}px {self.dp(7)}px;
                 text-align: left;
             }}
             QPushButton#RepoButton:hover {{
@@ -840,20 +905,23 @@ class PRLTodayWindow(QWidget):
                 background: transparent;
             }}
             QSlider::groove:horizontal {{
-                height: 3px;
+                height: {self.dp(3)}px;
                 background: {INPUT_BORDER};
                 border-radius: 1px;
             }}
             QSlider::handle:horizontal {{
                 background: {ACCENT};
-                width: 12px;
-                border-radius: 6px;
-                margin: -5px 0;
+                width: {self.dp(12)}px;
+                border-radius: {self.dp(6)}px;
+                margin: -{self.dp(5)}px 0;
             }}
             """
         )
 
     def update_progress_style(self, loading: bool = False) -> None:
+        if self._progress_loading == loading:
+            return
+        self._progress_loading = loading
         chunk = LOADING_ACCENT if loading else ACCENT
         self.progress_bar.setStyleSheet(
             f"""
@@ -861,7 +929,7 @@ class PRLTodayWindow(QWidget):
                 background-color: {PANEL_SOFT};
                 border: none;
                 border-radius: 1px;
-                margin: 3px 0;
+                margin: {self.dp(3)}px 0;
             }}
             QProgressBar::chunk {{
                 background-color: {chunk};
@@ -887,10 +955,10 @@ class PRLTodayWindow(QWidget):
             "detail": (316, 166),
         }
         min_w, min_h = min_sizes[level]
-        self.setMinimumSize(min_w, min_h)
+        self.setMinimumSize(self.dp(min_w), self.dp(min_h))
         if force_resize:
             width, height = sizes[level]
-            self.resize_without_geometry_persist(width, height)
+            self.resize_without_geometry_persist(self.dp(width), self.dp(height))
 
     def restore_geometry(self) -> None:
         window = self.config.get("window") or {}
@@ -911,7 +979,9 @@ class PRLTodayWindow(QWidget):
             self._suppress_geometry_persist = old_state
 
     def clamp_geometry(self, x: int, y: int, width: int, height: int) -> tuple[int, int, int, int]:
-        screen = QApplication.primaryScreen().availableGeometry()
+        screen = self.available_geometry(QPoint(x, y))
+        if screen is None:
+            return x, y, width, height
         width = max(self.minimumWidth(), min(width, screen.width()))
         height = max(self.minimumHeight(), min(height, screen.height()))
         max_x = screen.left() + max(screen.width() - width, 0)
@@ -923,22 +993,41 @@ class PRLTodayWindow(QWidget):
             height,
         )
 
+    def available_geometry(self, point: QPoint | None = None) -> Any:
+        screen_obj = None
+        if point is not None and hasattr(QApplication, "screenAt"):
+            screen_obj = QApplication.screenAt(point)
+        if screen_obj is None and hasattr(self, "screen"):
+            screen_obj = self.screen()
+        if screen_obj is None:
+            screen_obj = QApplication.primaryScreen()
+        if screen_obj is None:
+            return None
+        return screen_obj.availableGeometry()
+
     def on_opacity_changed(self, value: int) -> None:
         self.bg_opacity = value
         self.update_style(self.underMouse())
 
     def update_header_positions(self, hovered: bool) -> None:
         width = self.right_container.width()
-        self.btn_settings.move(max(width - 40, 0), 3)
-        self.btn_close.move(max(width - 18, 0), 3)
+        self.btn_settings.move(max(width - self.dp(40), 0), self.dp(3))
+        self.btn_close.move(max(width - self.dp(18), 0), self.dp(3))
         self.btn_settings.setVisible(hovered)
         self.btn_close.setVisible(hovered)
         self.status_label.adjustSize()
-        reserved = 45 if hovered else 0
+        reserved = self.dp(45) if hovered else 0
         target_x = max(width - reserved - self.status_label.width(), 0)
+        if self._header_target_x == target_x:
+            return
+        self._header_target_x = target_x
         self.header_anim.stop()
+        self.header_anim.setStartValue(self.status_label.pos())
         self.header_anim.setEndValue(QPoint(int(target_x), 0))
-        self.header_anim.start()
+        if abs(self.status_label.x() - target_x) <= 1:
+            self.status_label.move(int(target_x), 0)
+        else:
+            self.header_anim.start()
 
     def toggle_config(self) -> None:
         if self._is_config:
@@ -970,13 +1059,13 @@ class PRLTodayWindow(QWidget):
         self._is_config = True
         self.view_stack.setCurrentIndex(1)
         self.btn_settings.setText("<")
-        self.setMinimumSize(380, 410)
-        self.resize_without_geometry_persist(max(self.width(), 430), max(self.height(), 520))
+        self.setMinimumSize(self.dp(380), self.dp(410))
+        self.resize_without_geometry_persist(max(self.width(), self.dp(430)), max(self.height(), self.dp(520)))
         self.show_window()
 
     def show_first_run_config(self) -> None:
         self.show_config()
-        self.config_msg.setStyleSheet(f"font-size: 9px; color: {ACCENT}; font-weight: 700;")
+        self.config_msg.setStyleSheet(f"font-size: {self.dp(9)}px; color: {ACCENT}; font-weight: 700;")
         self.config_msg.setText("Set wallet, pool, miner and price source, then save.")
 
     def show_window(self) -> None:
@@ -1192,9 +1281,10 @@ class PRLTodayWindow(QWidget):
             current = self.event_global_pos(event)
             delta = current - self.old_pos
             new_pos = self.pos() + delta
-            screen = QApplication.primaryScreen().availableGeometry()
-            new_pos.setX(max(screen.left(), min(new_pos.x(), screen.right() - self.width())))
-            new_pos.setY(max(screen.top(), min(new_pos.y(), screen.bottom() - self.height())))
+            screen = self.available_geometry(current)
+            if screen is not None:
+                new_pos.setX(max(screen.left(), min(new_pos.x(), screen.right() - self.width())))
+                new_pos.setY(max(screen.top(), min(new_pos.y(), screen.bottom() - self.height())))
             self.move(new_pos)
             self.old_pos = current
 
@@ -1206,7 +1296,7 @@ class PRLTodayWindow(QWidget):
 
     def resizeEvent(self, event: Any) -> None:
         super().resizeEvent(event)
-        self.sizegrip.move(self.width() - 14, self.height() - 14)
+        self.sizegrip.move(self.width() - self.dp(14), self.height() - self.dp(14))
         self.update_header_positions(self.underMouse())
         self.schedule_geometry_persist()
 
@@ -1243,6 +1333,8 @@ class PRLTodayWindow(QWidget):
 
 
 def run(config: dict[str, Any]) -> None:
+    if QApplication.instance() is None:
+        configure_high_dpi()
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     window = PRLTodayWindow(config)

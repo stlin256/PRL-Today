@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import unittest
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -14,12 +16,20 @@ if str(SRC) not in sys.path:
 from prl_profit_float.api import ApiError, DataSnapshot, HttpClient, fetch_snapshot, normalize_http_url, parse_safetrade_page
 from prl_profit_float.config import DEFAULT_CONFIG, miner_address_error
 from prl_profit_float.model import compute_estimate, extract_market_price, fit_hashrate_hps, parse_hashrate, today_observed_prl
-from prl_profit_float.qt_app import ProfitWorker
+from prl_profit_float.qt_app import ProfitWorker, screen_ui_scale
 
 
 class BrokenClient:
     def get_json(self, url: str) -> dict[str, object]:
         raise RuntimeError(f"boom: {url}")
+
+
+class FakeScreen:
+    def __init__(self, dpi: float):
+        self.dpi = dpi
+
+    def logicalDotsPerInch(self) -> float:
+        return self.dpi
 
 
 class ModelTest(unittest.TestCase):
@@ -119,6 +129,14 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(worker.failure_counts["market"], 0)
         finally:
             worker.stop()
+
+    def test_screen_ui_scale_uses_logical_dpi(self) -> None:
+        self.assertEqual(screen_ui_scale(FakeScreen(72)), 1.0)
+        self.assertAlmostEqual(screen_ui_scale(FakeScreen(144)), 1.5)
+
+    def test_screen_ui_scale_allows_environment_override(self) -> None:
+        with patch.dict(os.environ, {"PRL_TODAY_UI_SCALE": "2.5"}):
+            self.assertEqual(screen_ui_scale(FakeScreen(96)), 1.8)
 
 
 if __name__ == "__main__":
