@@ -4,13 +4,14 @@ import unittest
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from prl_profit_float.api import ApiError, DataSnapshot, fetch_snapshot, normalize_http_url, parse_safetrade_page
+from prl_profit_float.api import ApiError, DataSnapshot, HttpClient, fetch_snapshot, normalize_http_url, parse_safetrade_page
 from prl_profit_float.config import DEFAULT_CONFIG, miner_address_error
 from prl_profit_float.model import compute_estimate, extract_market_price, fit_hashrate_hps, parse_hashrate, today_observed_prl
 from prl_profit_float.qt_app import ProfitWorker
@@ -105,7 +106,7 @@ class ModelTest(unittest.TestCase):
         self.assertTrue(any("unsupported URL" in error for error in snapshot.errors))
 
     def test_fetch_snapshot_reports_unexpected_client_errors(self) -> None:
-        snapshot = fetch_snapshot(DEFAULT_CONFIG, client=BrokenClient(), sources=["chain"])
+        snapshot = fetch_snapshot(DEFAULT_CONFIG, client=cast(HttpClient, BrokenClient()), sources=["chain"])
         self.assertEqual(snapshot.chain, None)
         self.assertTrue(any("unexpected RuntimeError" in error for error in snapshot.errors))
 

@@ -91,17 +91,20 @@ If your default Python cannot import Qt, install the project dependencies in tha
 ## Windows Build
 
 ```powershell
-python -m pip install pyinstaller
+python -m pip install -e ".[build]"
 python -m PyInstaller PRL-Today.spec --noconfirm --clean
+python scripts/package_release.py --platform windows --arch x64 --output release
 ```
 
-The build output is a single executable:
+The PyInstaller build output is a single executable:
 
 ```text
 dist\PRL-Today.exe
 ```
 
-For releases, upload `PRL-Today.exe` directly as the Windows asset.
+For releases, upload the archive created under `release\`.
+
+Cross-platform release packaging is documented in [docs/release.md](docs/release.md). The GitHub Actions release workflow builds Windows x64, macOS x64, macOS arm64, and Linux x64 artifacts on native runners.
 
 ## Configuration
 

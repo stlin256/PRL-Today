@@ -1,5 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+
+WINDOWS = sys.platform == 'win32'
+MACOS = sys.platform == 'darwin'
+ICON_PATH = 'assets/app_icon.ico' if WINDOWS else None
 
 a = Analysis(
     ['run.py'],
@@ -97,12 +102,19 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
-    icon='assets/app_icon.ico',
+    icon=ICON_PATH,
     codesign_identity=None,
     entitlements_file=None,
 )
+
+if MACOS:
+    app = BUNDLE(
+        exe,
+        name='PRL-Today.app',
+        bundle_identifier='com.stlin256.prltoday',
+    )
