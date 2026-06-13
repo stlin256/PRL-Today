@@ -259,6 +259,7 @@ class SlotNumber(QWidget):
 
 class ProfitWorker(QObject):
     data_updated = pyqtSignal(object)
+    MAX_BACKOFF_SECONDS = 300
 
     def __init__(self, config: dict[str, Any]):
         super().__init__()
@@ -266,6 +267,7 @@ class ProfitWorker(QObject):
         self.snapshot = DataSnapshot()
         self.last_updates: dict[str, datetime | None] = {source: None for source in SOURCE_FIELDS}
         self.next_due: dict[str, float] = {source: 0.0 for source in SOURCE_FIELDS}
+        self.failure_counts: dict[str, int] = {source: 0 for source in SOURCE_FIELDS}
         self._running = True
         self.client = HttpClient(self.config)
         self._lock = threading.Lock()
@@ -285,14 +287,18 @@ class ProfitWorker(QObject):
                         "sources": list(due_sources),
                     }
                 )
-                update = fetch_snapshot(self.config, self.client, due_sources)
+                try:
+                    update = fetch_snapshot(self.config, self.client, due_sources)
+                except Exception as exc:
+                    update = DataSnapshot(errors=[f"worker: unexpected {type(exc).__name__}: {exc}"])
                 merge_snapshot(self.snapshot, update)
                 now = datetime.now().astimezone()
                 for source in due_sources:
                     field_name = SOURCE_FIELDS[source]
-                    if getattr(update, field_name) is not None:
+                    success = getattr(update, field_name) is not None
+                    if success:
                         self.last_updates[source] = now
-                    self.next_due[source] = time.monotonic() + refresh_seconds(self.config, f"{source}_seconds")
+                    self.next_due[source] = time.monotonic() + self.next_delay(source, success)
                 estimate = compute_estimate(self.config, self.snapshot)
                 self.data_updated.emit(
                     {
@@ -310,6 +316,15 @@ class ProfitWorker(QObject):
 
     def intervals(self) -> dict[str, int]:
         return {source: refresh_seconds(self.config, f"{source}_seconds") for source in SOURCE_FIELDS}
+
+    def next_delay(self, source: str, success: bool) -> int:
+        interval = refresh_seconds(self.config, f"{source}_seconds")
+        if success:
+            self.failure_counts[source] = 0
+            return interval
+        failures = self.failure_counts.get(source, 0) + 1
+        self.failure_counts[source] = failures
+        return min(interval * (2 ** min(failures, 4)), self.MAX_BACKOFF_SECONDS)
 
     def sleep_slice(self) -> None:
         for _ in range(5):
@@ -332,6 +347,7 @@ class ProfitWorker(QObject):
         apply_proxy_env(self.config)
         self.client = HttpClient(self.config)
         self.next_due = {source: 0.0 for source in SOURCE_FIELDS}
+        self.failure_counts = {source: 0 for source in SOURCE_FIELDS}
 
     def stop(self) -> None:
         self._running = False

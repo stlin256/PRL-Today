@@ -13,6 +13,12 @@ if str(SRC) not in sys.path:
 from prl_profit_float.api import ApiError, DataSnapshot, fetch_snapshot, normalize_http_url, parse_safetrade_page
 from prl_profit_float.config import DEFAULT_CONFIG, miner_address_error
 from prl_profit_float.model import compute_estimate, extract_market_price, fit_hashrate_hps, parse_hashrate, today_observed_prl
+from prl_profit_float.qt_app import ProfitWorker
+
+
+class BrokenClient:
+    def get_json(self, url: str) -> dict[str, object]:
+        raise RuntimeError(f"boom: {url}")
 
 
 class ModelTest(unittest.TestCase):
@@ -97,6 +103,21 @@ class ModelTest(unittest.TestCase):
         snapshot = fetch_snapshot(config, sources=["chain"])
         self.assertEqual(snapshot.chain, None)
         self.assertTrue(any("unsupported URL" in error for error in snapshot.errors))
+
+    def test_fetch_snapshot_reports_unexpected_client_errors(self) -> None:
+        snapshot = fetch_snapshot(DEFAULT_CONFIG, client=BrokenClient(), sources=["chain"])
+        self.assertEqual(snapshot.chain, None)
+        self.assertTrue(any("unexpected RuntimeError" in error for error in snapshot.errors))
+
+    def test_worker_refresh_backoff_resets_after_success(self) -> None:
+        worker = ProfitWorker(DEFAULT_CONFIG)
+        try:
+            self.assertEqual(worker.next_delay("market", False), 60)
+            self.assertEqual(worker.next_delay("market", False), 120)
+            self.assertEqual(worker.next_delay("market", True), 30)
+            self.assertEqual(worker.failure_counts["market"], 0)
+        finally:
+            worker.stop()
 
 
 if __name__ == "__main__":

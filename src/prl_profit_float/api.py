@@ -225,6 +225,8 @@ def fetch_snapshot(
             setattr(snapshot, field_name, data)
         except ApiError as exc:
             snapshot.errors.append(f"{source}: {exc}")
+        except Exception as exc:
+            snapshot.errors.append(f"{source}: unexpected {type(exc).__name__}: {exc}")
     return snapshot
 
 
