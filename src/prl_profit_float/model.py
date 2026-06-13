@@ -197,8 +197,8 @@ def pool_fee(config: dict[str, Any], stats: dict[str, Any] | None) -> float:
 def tool_fee(config: dict[str, Any]) -> float:
     calc = config.get("calculation") or {}
     if calc.get("tool_fee_mode", "auto") == "manual":
-        return number(calc.get("tool_fee_percent"), 1.0)
-    return number(selected_mining_software(config).get("dev_fee_percent"), 1.0)
+        return number(calc.get("tool_fee_percent"), 0.0)
+    return number(selected_mining_software(config).get("dev_fee_percent"), 0.0)
 
 
 def price_usd(config: dict[str, Any], market: dict[str, Any] | None) -> float:

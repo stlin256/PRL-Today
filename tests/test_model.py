@@ -67,7 +67,7 @@ class ModelTest(unittest.TestCase):
         )
         self.assertGreater(estimate.projected_24h_prl, 0)
         self.assertAlmostEqual(estimate.fee_percent, 3.0)
-        self.assertAlmostEqual(estimate.tool_fee_percent, 1.0)
+        self.assertAlmostEqual(estimate.tool_fee_percent, 0.0)
         self.assertAlmostEqual(estimate.price_usd, 0.5201)
         self.assertEqual(estimate.price_source, "market")
         self.assertAlmostEqual(estimate.usd_cny, 6.785295)

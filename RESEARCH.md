@@ -2,6 +2,8 @@
 
 Date: 2026-06-10
 
+Latest fee preset check: 2026-06-13
+
 ## Sources checked
 
 - AlphaPool miner page: `https://pearl.alphapool.tech/#miner/prl1p2ka5l06wmq73kdsqec9k7fsv00jt76nfhk56e9nh82fn07qjualspfsxyp`
@@ -23,7 +25,17 @@ Date: 2026-06-10
 - AlphaPool default stratum host/port observed in API: `us2.alphapool.tech:5566`
 - AlphaPool solo port observed in API: `5567`; page notes solo mining was being reintegrated.
 - AlphaPool page says PPLNS uses time-weighted shares with a 65 minute half-life.
-- SafeTrade web page was Cloudflare-blocked from the current network. AlphaPool's page script uses PRLScan market API, and PRLScan reports a SafeTrade PRL/USDT provider sourced through CoinPaprika, so this app uses PRLScan as the default price API.
+- SafeTrade is the default PRL/USD source in the app. PRLScan remains available as a fallback source.
+
+## Fee preset check on 2026-06-13
+
+- Hashrate.no PRL pools page was rechecked for pool fees, payout schemes, and pool share metadata.
+- Current bundled pool fees: Kryptex 1.00%, Pearlhash 3.00%, Luckypool 1.00%, AlphaPool 3.00%, BaikalMine 0.50%, JETSKI 1.00%, akoya 2.00%, Himpool SOLO 2.00%, Mineprl 4.40%, Himpool PPLNS 1.00%, NushyPool PPS 1.00%, HeroMiners 0.00%, NushyPool SOLO 1.00%.
+- Hashrate.no PRL miners page still lists AlphaMiner as 1.00%, but AlphaMiner's official latest GitHub release, v1.7.7, states the developer fee was removed and is now 0%.
+- lpminer's public miner page lists Pearl at 0% fees.
+- BzMiner's v25.0.0b2 beta release notes list Pearl with a 2% dev fee and CPU-only support for that beta.
+- SRBMiner's official README lists `pearlhash` at 3.00%, matching Hashrate.no.
+- The app now treats AlphaMiner official release metadata as the source of truth for AlphaMiner, adds lpminer and BzMiner presets, and keeps SRBMiner at 3.00%.
 
 Observed live values during research:
 

@@ -533,7 +533,7 @@ class PRLTodayWindow(QWidget):
         self.combo_tool_fee_mode.addItems(["auto", "manual"])
         self.combo_tool_fee_mode.setCurrentText(str(calc.get("tool_fee_mode", "auto")))
         self.combo_tool_fee_mode.currentTextChanged.connect(self.sync_tool_fee_from_software)
-        self.input_tool_fee = QLineEdit(str(calc.get("tool_fee_percent", 1.0)))
+        self.input_tool_fee = QLineEdit(str(calc.get("tool_fee_percent", 0.0)))
         self.combo_market_source = QComboBox()
         self.combo_market_source.addItems(market_source_names(self.config) or ["PRLScan"])
         self.combo_market_source.setCurrentText(str(self.config.get("selected_market_source", "PRLScan")))
@@ -676,7 +676,7 @@ class PRLTodayWindow(QWidget):
         selected = self.combo_mining_software.currentText()
         for item in self.config.get("mining_software", []):
             if item.get("name") == selected:
-                self.input_tool_fee.setText(str(item.get("dev_fee_percent", 1.0)))
+                self.input_tool_fee.setText(str(item.get("dev_fee_percent", 0.0)))
                 return
 
     def init_tray(self) -> None:
@@ -968,7 +968,7 @@ class PRLTodayWindow(QWidget):
         calc["fee_mode"] = self.combo_fee_mode.currentText()
         calc["fee_override_percent"] = safe_float(self.input_fee.text(), float(calc.get("fee_override_percent", 3.0)))
         calc["tool_fee_mode"] = self.combo_tool_fee_mode.currentText()
-        calc["tool_fee_percent"] = safe_float(self.input_tool_fee.text(), float(calc.get("tool_fee_percent", 1.0)))
+        calc["tool_fee_percent"] = safe_float(self.input_tool_fee.text(), float(calc.get("tool_fee_percent", 0.0)))
         calc["price_mode"] = self.combo_price_mode.currentText()
         calc["manual_price_usd"] = safe_float(self.input_price.text(), float(calc.get("manual_price_usd", 0.52)))
         calc["fx_mode"] = self.combo_fx_mode.currentText()
