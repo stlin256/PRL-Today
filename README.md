@@ -1,11 +1,11 @@
 # PRL-Today
 
 [![Release](https://img.shields.io/github/v/release/stlin256/PRL-Today?sort=semver)](https://github.com/stlin256/PRL-Today/releases)
-[![Windows](https://img.shields.io/badge/platform-Windows-0078D6)](https://github.com/stlin256/PRL-Today/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2F855A)](https://github.com/stlin256/PRL-Today/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB)](https://www.python.org/)
 [![Built with PyInstaller](https://img.shields.io/badge/build-PyInstaller-5A0FC8)](https://pyinstaller.org/)
 
-PRL-Today is a small always-on-top Windows floating window for tracking today's Pearl (PRL) mining revenue in real time.
+PRL-Today is a small always-on-top desktop floating window for tracking today's Pearl (PRL) mining revenue in real time.
 
 It reads live miner, pool, market, network, and FX data, then displays a continuously moving 6-decimal estimate. The primary currency is selected automatically: Chinese system locales show CNY first, while other locales show USD first.
 
@@ -33,7 +33,7 @@ It reads live miner, pool, market, network, and FX data, then displays a continu
 
 ## Download
 
-Download the latest Windows build from the [GitHub Releases](https://github.com/stlin256/PRL-Today/releases) page.
+Download the latest Windows, macOS, or Linux archive from the [GitHub Releases](https://github.com/stlin256/PRL-Today/releases) page.
 
 On first launch, PRL-Today opens the setup panel automatically. Enter your wallet address, select the pool/mining software/price source, then save.
 
@@ -88,7 +88,7 @@ python run.py --check
 
 If your default Python cannot import Qt, install the project dependencies in that environment or set `PRL_TODAY_PYTHON` to a Python executable that has PyQt installed.
 
-## Windows Build
+## Release Build
 
 ```powershell
 python -m pip install -e ".[build]"
@@ -96,7 +96,7 @@ python -m PyInstaller PRL-Today.spec --noconfirm --clean
 python scripts/package_release.py --platform windows --arch x64 --output release
 ```
 
-The PyInstaller build output is a single executable:
+The PyInstaller build output is a native application for the current platform. On Windows, the main executable is:
 
 ```text
 dist\PRL-Today.exe
@@ -105,6 +105,8 @@ dist\PRL-Today.exe
 For releases, upload the archive created under `release\`.
 
 Cross-platform release packaging is documented in [docs/release.md](docs/release.md). The GitHub Actions release workflow builds Windows x64, macOS x64, macOS arm64, and Linux x64 artifacts on native runners.
+
+Pushing a `v*` tag builds all release archives and uploads them to the GitHub Release for that tag. Manual workflow runs build the same archives as downloadable workflow artifacts.
 
 ## Configuration
 
