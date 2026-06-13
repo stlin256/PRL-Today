@@ -482,7 +482,8 @@ class PRLTodayWindow(QWidget):
         header_layout.setSpacing(self.dp(2))
         self.logo_label = QLabel()
         self.logo_label.setObjectName("LogoLabel")
-        self.logo_label.setFixedSize(self.dp(40), self.dp(13))
+        self.logo_label.setAlignment(ALIGN_CENTER)
+        self.logo_label.setFixedSize(self.dp(42), self.dp(13))
         self.load_logo()
         header_layout.addWidget(self.logo_label)
         self.title_label = QLabel("Today")
@@ -533,7 +534,26 @@ class PRLTodayWindow(QWidget):
             self.logo_label.setText("PRL")
             self.logo_label.setStyleSheet(f"font-family: {FONT_UI}; color: {PEARL}; font-size: {self.dp(10)}px; font-weight: 800;")
             return
-        self.logo_label.setPixmap(pixmap.scaled(self.logo_label.size(), KEEP_ASPECT, SMOOTH_TRANSFORM))
+        dpr = self.logo_device_pixel_ratio()
+        target_size = self.logo_label.size()
+        scaled = pixmap.scaled(
+            max(1, int(target_size.width() * dpr)),
+            max(1, int(target_size.height() * dpr)),
+            KEEP_ASPECT,
+            SMOOTH_TRANSFORM,
+        )
+        if hasattr(scaled, "setDevicePixelRatio"):
+            scaled.setDevicePixelRatio(dpr)
+        self.logo_label.setPixmap(scaled)
+
+    def logo_device_pixel_ratio(self) -> float:
+        try:
+            ratio = float(self.devicePixelRatioF())
+        except (TypeError, ValueError, AttributeError):
+            ratio = 1.0
+        if not math.isfinite(ratio) or ratio <= 0:
+            return 1.0
+        return min(max(ratio, 1.0), 4.0)
 
     def build_monitor_view(self) -> QWidget:
         view = QWidget()
