@@ -20,8 +20,8 @@ It reads live miner, pool, market, network, and FX data, then displays a continu
 - Configurable display levels: `lite`, `standard`, and `detail`.
 - Configurable UI scale for high-DPI screens and smaller or larger floating-window minimum sizes.
 - User-level startup-on-login setting for Windows, macOS, and Linux.
-- Built-in PRL mining pool presets from Hashrate.no, including AlphaPool, Kryptex, Pearlhash, Luckypool, JETSKI, BaikalMine, akoya, Himpool, NushyPool, Mineprl, and HeroMiners.
-- Built-in PRL miner presets from Hashrate.no and current public miner docs:
+- Built-in PRL mining pool presets rechecked against each pool's official site, including AlphaPool, Kryptex, Pearlhash, Luckypool, JETSKI, BaikalMine, akoya, Himpool, NushyPool, Mineprl, and HeroMiners.
+- Built-in PRL miner presets rechecked against official release pages and public miner docs:
   - AlphaMiner, pearl algorithm, 0.00% developer fee from the official v1.7.7+ release.
   - lpminer, pearlhash algorithm, 0.00% developer fee.
   - BzMiner, pearl algorithm, 2.00% developer fee for the current CPU-only Pearl beta.
@@ -139,6 +139,7 @@ python -m compileall src tests
 ## Notes
 
 - AlphaPool is currently the only bundled pool preset with live miner/pool API paths wired by default.
+- AlphaPool's official frontend currently shows 0.00% pool fee; its JSON stats endpoint still reports the older 3.00% value, so the app ignores the API fee field for this preset.
 - Other pool presets are included for fee and metadata convenience; they can be extended with API paths later.
 - AlphaMiner fee follows the official AlphaMiner release metadata because third-party miner tables can lag behind releases.
 - SafeTrade can reject direct requests in some network environments. Use the proxy setting if needed.

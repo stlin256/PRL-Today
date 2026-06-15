@@ -189,9 +189,10 @@ def pool_fee(config: dict[str, Any], stats: dict[str, Any] | None) -> float:
     calc = config.get("calculation") or {}
     if calc.get("fee_mode") == "manual":
         return number(calc.get("fee_override_percent"), 0.0)
-    if stats and stats.get("feePercent") is not None:
+    pool = selected_pool(config)
+    if not pool.get("ignore_api_fee") and stats and stats.get("feePercent") is not None:
         return number(stats.get("feePercent"), 0.0)
-    return number(selected_pool(config).get("default_fee_percent"), 0.0)
+    return number(pool.get("default_fee_percent"), 0.0)
 
 
 def tool_fee(config: dict[str, Any]) -> float:

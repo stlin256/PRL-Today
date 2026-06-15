@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import json
 import unittest
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -14,8 +16,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from prl_profit_float.api import ApiError, DataSnapshot, HttpClient, fetch_snapshot, normalize_http_url, parse_safetrade_page
-from prl_profit_float.config import DEFAULT_CONFIG, miner_address_error
-from prl_profit_float.model import compute_estimate, extract_market_price, fit_hashrate_hps, parse_hashrate, today_observed_prl
+from prl_profit_float.config import DEFAULT_CONFIG, load_config, miner_address_error
+from prl_profit_float.model import compute_estimate, extract_market_price, fit_hashrate_hps, parse_hashrate, pool_fee, today_observed_prl
 from prl_profit_float.qt_app import ProfitWorker, configured_ui_scale, parse_ui_scale_setting, screen_ui_scale
 from prl_profit_float.startup import LaunchCommand, linux_desktop_content, startup_file_content, windows_batch_content
 
@@ -84,11 +86,46 @@ class ModelTest(unittest.TestCase):
             now=datetime.fromtimestamp(1781090000, tz=timezone.utc).astimezone(),
         )
         self.assertGreater(estimate.projected_24h_prl, 0)
-        self.assertAlmostEqual(estimate.fee_percent, 3.0)
+        self.assertAlmostEqual(estimate.fee_percent, 0.0)
         self.assertAlmostEqual(estimate.tool_fee_percent, 0.0)
         self.assertAlmostEqual(estimate.price_usd, 0.5201)
         self.assertEqual(estimate.price_source, "market")
         self.assertAlmostEqual(estimate.usd_cny, 6.785295)
+
+    def test_pool_fee_can_ignore_stale_api_fee(self) -> None:
+        self.assertAlmostEqual(pool_fee(DEFAULT_CONFIG, {"feePercent": 3}), 0.0)
+
+    def test_pool_fee_uses_api_fee_by_default(self) -> None:
+        config = {**DEFAULT_CONFIG, "selected_pool": "Kryptex"}
+        self.assertAlmostEqual(pool_fee(config, {"feePercent": 1.5}), 1.5)
+
+    def test_load_config_refreshes_stale_builtin_pool_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "selected_pool": "NushyPool PPS",
+                        "pools": [
+                            {"name": "AlphaPool PRL", "default_fee_percent": 3.0},
+                            {"name": "Pearlhash", "default_fee_percent": 3.0},
+                            {"name": "NushyPool PPS", "payout_scheme": "PPS"},
+                            {"name": "NushyPool SOLO", "base_url": "https://nushypool.com/prl/pool"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+        pools = {str(pool["name"]): pool for pool in config["pools"]}
+        self.assertEqual(config["selected_pool"], "NushyPool FPPS")
+        self.assertAlmostEqual(pools["AlphaPool PRL"]["default_fee_percent"], 0.0)
+        self.assertTrue(pools["AlphaPool PRL"]["ignore_api_fee"])
+        self.assertAlmostEqual(pools["Pearlhash"]["default_fee_percent"], 0.0)
+        self.assertEqual(pools["NushyPool FPPS"]["payout_scheme"], "FPPS")
+        self.assertEqual(pools["NushyPool SOLO"]["base_url"], "https://nushypool.com/prl_solo/pool")
 
     def test_extract_market_price_supports_safetrade_shapes(self) -> None:
         self.assertAlmostEqual(extract_market_price({"last": "0.6000"}), 0.6)

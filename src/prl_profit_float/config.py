@@ -21,6 +21,21 @@ EXAMPLE_CONFIG_PATH = PROJECT_ROOT / "config.example.json"
 BUNDLED_EXAMPLE_CONFIG_PATH = BUNDLE_ROOT / "config.example.json"
 
 
+POOL_PRESET_OVERRIDES: dict[str, dict[str, Any]] = {
+    "AlphaPool PRL": {"default_fee_percent": 0.0, "ignore_api_fee": True},
+    "Pearlhash": {"default_fee_percent": 0.0},
+    "akoya": {"payout_scheme": "PPLNS-N"},
+    "NushyPool FPPS": {
+        "base_url": "https://nushypool.com/prl/pool",
+        "default_fee_percent": 1.0,
+        "payout_scheme": "FPPS",
+    },
+    "NushyPool SOLO": {"base_url": "https://nushypool.com/prl_solo/pool"},
+}
+
+LEGACY_POOL_NAMES = {"NushyPool PPS": "NushyPool FPPS"}
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "miner_address": "prl1p2ka5l06wmq73kdsqec9k7fsv00jt76nfhk56e9nh82fn07qjualspfsxyp",
     "selected_pool": "AlphaPool PRL",
@@ -32,7 +47,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "stats_path": "/api/stats",
             "miner_path_template": "/api/miner/{address}",
             "api_enabled": True,
-            "default_fee_percent": 3.0,
+            "default_fee_percent": 0.0,
+            "ignore_api_fee": True,
             "default_payout_min_prl": 1.0,
             "payout_scheme": "PPLNS",
             "hashrate_no_hashrate": "1.6 Eh/s",
@@ -51,7 +67,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "name": "Pearlhash",
             "base_url": "https://pearlhash.xyz",
             "api_enabled": False,
-            "default_fee_percent": 3.0,
+            "default_fee_percent": 0.0,
             "payout_scheme": "PPLNS",
             "hashrate_no_hashrate": "5.6 Eh/s",
             "hashrate_no_share_percent": 21.0,
@@ -88,7 +104,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "base_url": "https://akoyapool.com",
             "api_enabled": False,
             "default_fee_percent": 2.0,
-            "payout_scheme": "PPLTS",
+            "payout_scheme": "PPLNS-N",
             "hashrate_no_hashrate": "149.0 Ph/s",
             "hashrate_no_share_percent": 0.6,
         },
@@ -113,19 +129,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "hashrate_no_share_percent": 0.0,
         },
         {
-            "name": "NushyPool PPS",
+            "name": "NushyPool FPPS",
             "hashrate_name": "NushyPool",
             "base_url": "https://nushypool.com/prl/pool",
             "api_enabled": False,
             "default_fee_percent": 1.0,
-            "payout_scheme": "PPS",
+            "payout_scheme": "FPPS",
             "hashrate_no_hashrate": "385.9 Th/s",
             "hashrate_no_share_percent": 0.0,
         },
         {
             "name": "NushyPool SOLO",
             "hashrate_name": "NushyPool",
-            "base_url": "https://nushypool.com/prl/pool",
+            "base_url": "https://nushypool.com/prl_solo/pool",
             "api_enabled": False,
             "default_fee_percent": 1.0,
             "payout_scheme": "SOLO",
@@ -301,10 +317,54 @@ def merge_named_list(default: list[Any], override: list[Any]) -> list[Any]:
     return [merged[name] for name in order]
 
 
+def normalize_builtin_pool_presets(config: dict[str, Any]) -> dict[str, Any]:
+    pools = config.get("pools")
+    if not isinstance(pools, list):
+        return config
+
+    selected = config.get("selected_pool")
+    if selected in LEGACY_POOL_NAMES:
+        config["selected_pool"] = LEGACY_POOL_NAMES[str(selected)]
+
+    normalized: list[Any] = []
+    by_name: dict[str, dict[str, Any]] = {}
+    for item in pools:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+
+        pool = copy.deepcopy(item)
+        name = str(pool.get("name", ""))
+        if name in LEGACY_POOL_NAMES:
+            name = LEGACY_POOL_NAMES[name]
+            pool["name"] = name
+
+        overrides = POOL_PRESET_OVERRIDES.get(name)
+        if overrides:
+            pool.update(copy.deepcopy(overrides))
+
+        if not name:
+            normalized.append(pool)
+            continue
+
+        existing = by_name.get(name)
+        if existing is None:
+            by_name[name] = pool
+            normalized.append(pool)
+        else:
+            existing.update(pool)
+            overrides = POOL_PRESET_OVERRIDES.get(name)
+            if overrides:
+                existing.update(copy.deepcopy(overrides))
+
+    config["pools"] = normalized
+    return config
+
+
 def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
     if path.exists():
         with path.open("r", encoding="utf-8") as f:
-            return deep_merge(DEFAULT_CONFIG, json.load(f))
+            return normalize_builtin_pool_presets(deep_merge(DEFAULT_CONFIG, json.load(f)))
 
     example_path = EXAMPLE_CONFIG_PATH if EXAMPLE_CONFIG_PATH.exists() else BUNDLED_EXAMPLE_CONFIG_PATH
     if example_path.exists():
@@ -312,6 +372,7 @@ def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
             config = deep_merge(DEFAULT_CONFIG, json.load(f))
     else:
         config = copy.deepcopy(DEFAULT_CONFIG)
+    normalize_builtin_pool_presets(config)
     save_config(config, path)
     return config
 

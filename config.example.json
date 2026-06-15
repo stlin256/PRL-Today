@@ -9,7 +9,8 @@
       "stats_path": "/api/stats",
       "miner_path_template": "/api/miner/{address}",
       "api_enabled": true,
-      "default_fee_percent": 3.0,
+      "default_fee_percent": 0.0,
+      "ignore_api_fee": true,
       "default_payout_min_prl": 1.0,
       "payout_scheme": "PPLNS",
       "hashrate_no_hashrate": "1.6 Eh/s",
@@ -28,7 +29,7 @@
       "name": "Pearlhash",
       "base_url": "https://pearlhash.xyz",
       "api_enabled": false,
-      "default_fee_percent": 3.0,
+      "default_fee_percent": 0.0,
       "payout_scheme": "PPLNS",
       "hashrate_no_hashrate": "5.6 Eh/s",
       "hashrate_no_share_percent": 21.0
@@ -65,7 +66,7 @@
       "base_url": "https://akoyapool.com",
       "api_enabled": false,
       "default_fee_percent": 2.0,
-      "payout_scheme": "PPLTS",
+      "payout_scheme": "PPLNS-N",
       "hashrate_no_hashrate": "149.0 Ph/s",
       "hashrate_no_share_percent": 0.6
     },
@@ -90,19 +91,19 @@
       "hashrate_no_share_percent": 0.0
     },
     {
-      "name": "NushyPool PPS",
+      "name": "NushyPool FPPS",
       "hashrate_name": "NushyPool",
       "base_url": "https://nushypool.com/prl/pool",
       "api_enabled": false,
       "default_fee_percent": 1.0,
-      "payout_scheme": "PPS",
+      "payout_scheme": "FPPS",
       "hashrate_no_hashrate": "385.9 Th/s",
       "hashrate_no_share_percent": 0.0
     },
     {
       "name": "NushyPool SOLO",
       "hashrate_name": "NushyPool",
-      "base_url": "https://nushypool.com/prl/pool",
+      "base_url": "https://nushypool.com/prl_solo/pool",
       "api_enabled": false,
       "default_fee_percent": 1.0,
       "payout_scheme": "SOLO",
